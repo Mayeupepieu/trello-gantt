@@ -7,11 +7,12 @@ var LEFT_W = 320;
 var ZOOMS = { jour: 44, semaine: 22, mois: 8 }; // pixels par jour
 var DAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
 var MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
-var COLORS = { e: '#579dff', p: '#faa53d', trello: '#b3b9c4' };
-var NAMES = { e: 'Étude', p: 'Pose', trello: 'Dates Trello' };
-var NAMES_DEL = { e: 'Étude supprimée', p: 'Pose supprimée' };
+var COLORS = { e: '#579dff', p: '#faa53d', trello: '#b3b9c4', c: '#b8acf6' };
+var NAMES = { e: 'Étude', p: 'Pose', trello: 'Dates Trello', c: 'Congés' };
+var NAMES_DEL = { e: 'Étude supprimée', p: 'Pose supprimée', c: 'Congé supprimé' };
+var CONGES = '__conges'; // ligne spéciale des congés / fermetures
 
-var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', hiddenLists: [], search: '', lists: [], cards: [], plans: {}, geo: null };
+var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', hiddenLists: [], search: '', conges: [], lists: [], cards: [], plans: {}, geo: null };
 var PREFS = ['zoom', 'hideDone', 'showParts', 'showUndated', 'sort', 'group', 'tool', 'hiddenLists'];
 var MAX = 4096; // limite Trello de stockage par carte
 
@@ -40,6 +41,29 @@ function matches(r) {
   if (!state.search) return true;
   var q = norm(state.search);
   return norm(r.name).indexOf(q) >= 0 || r.parts.some(function (p) { return norm(p.name).indexOf(q) >= 0; });
+}
+/* Jours fériés en France métropolitaine (fixes + liés à Pâques) */
+var feriesCache = {};
+function feries(y) {
+  if (feriesCache[y]) return feriesCache[y];
+  var a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25),
+    g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4,
+    l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451),
+    month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  var paques = new Date(y, month - 1, day), out = {};
+  [[1, 1, 'Jour de l\'an'], [5, 1, 'Fête du Travail'], [5, 8, 'Victoire 1945'], [7, 14, 'Fête nationale'], [8, 15, 'Assomption'],
+   [11, 1, 'Toussaint'], [11, 11, 'Armistice 1918'], [12, 25, 'Noël']].forEach(function (f) { out[key(new Date(y, f[0] - 1, f[1]))] = f[2]; });
+  out[key(addDays(paques, 1))] = 'Lundi de Pâques';
+  out[key(addDays(paques, 39))] = 'Ascension';
+  out[key(addDays(paques, 50))] = 'Lundi de Pentecôte';
+  return (feriesCache[y] = out);
+}
+function ferieOf(d) { return feries(d.getFullYear())[key(d)] || ''; }
+/* Congés / fermetures couvrant un jour : liste des libellés */
+function congeOf(d) {
+  var t0 = +day0(d), names = [];
+  state.conges.forEach(function (c) { if (+iso(c.s) <= t0 && t0 <= +iso(c.e)) names.push(c.n || 'Congés'); });
+  return names.join(', ');
 }
 function span(r) { return r ? { s: iso(r[0]), e: iso(r[1]) } : null; }
 
@@ -155,7 +179,9 @@ function load() {
   var getCards = withTimeout(t.cards('all'), 15000, null).then(function (c) {
     return c || withTimeout(t.cards('id', 'name', 'idList', 'start', 'due', 'dueComplete', 'labels', 'closed'), 15000, null);
   });
-  return Promise.all([getCards, withTimeout(t.lists('id', 'name'), 15000, null)]).then(function (res) {
+  var getConges = withTimeout(t.get('board', 'shared', 'conges'), 6000, null);
+  return Promise.all([getCards, withTimeout(t.lists('id', 'name'), 15000, null), getConges]).then(function (res) {
+    if (Array.isArray(res[2])) state.conges = res[2];
     if (seq !== loadSeq) return;
     if (!res[0] || !res[1]) throw new Error('Trello n\'a pas répondu');
     var cards = res[0].filter(function (c) { return !c.closed; });
@@ -233,6 +259,7 @@ function render() {
   rows.forEach(function (r) {
     allBars(r, state.showParts).forEach(function (b) { if (b.r.s < min) min = b.r.s; if (b.r.e > max) max = b.r.e; });
   });
+  state.conges.forEach(function (c) { var cs = iso(c.s), ce = iso(c.e); if (ce >= addDays(today, -60)) { if (cs < min) min = cs; if (ce > max) max = ce; } });
   // Frise en jours ouvrés uniquement (lundi → vendredi), qui commence un lundi
   min = monday(addDays(min, -3));
   max = addDays(max, state.zoom === 'mois' ? 35 : 14);
@@ -253,6 +280,9 @@ function render() {
   work.forEach(function (d, i) {
     var isMon = d.getDay() === 1;
     if (isMon && isoWeek(d) % 2 === 0) bg += '<div class="weekband" style="left:' + (i * px) + 'px;width:' + (5 * px) + 'px"></div>';
+    var fe = ferieOf(d), co = congeOf(d);
+    if (fe) bg += '<div class="ferie" style="left:' + (i * px) + 'px;width:' + px + 'px" title="' + esc(fe) + '"></div>';
+    else if (co) bg += '<div class="conge" style="left:' + (i * px) + 'px;width:' + px + 'px"></div>';
     if (isMon) bg += '<div class="tick week" style="left:' + (i * px) + 'px"></div>';
     else if (state.zoom !== 'mois') bg += '<div class="tick" style="left:' + (i * px) + 'px"></div>';
   });
@@ -277,12 +307,22 @@ function render() {
     if (state.zoom !== 'mois') {
       var isToday = +d === +today;
       var txt = state.zoom === 'jour' ? DAYS[d.getDay()] + ' ' + d.getDate() : d.getDate();
-      bottom += '<div class="hcell bottom' + (isToday ? ' today' : '') + (d.getDay() === 1 ? ' mon' : '') + '" style="left:' + (i * px) + 'px;width:' + px + 'px">' + txt + '</div>';
+      var fe = ferieOf(d), co = congeOf(d);
+      bottom += '<div class="hcell bottom' + (isToday ? ' today' : '') + (d.getDay() === 1 ? ' mon' : '') + (fe ? ' ferie' : co ? ' conge' : '') +
+        '" style="left:' + (i * px) + 'px;width:' + px + 'px"' + (fe || co ? ' title="' + esc(fe ? 'Férié : ' + fe : 'Congés : ' + co) + '"' : '') + '>' + txt + '</div>';
     }
   });
 
-  // Lignes : (liste) > carte > parties, triées selon le choix
-  var html = '';
+  // Ligne des congés / fermetures (commune à tout le tableau)
+  var cbars = state.conges.map(function (c, i) {
+    var r = { s: iso(c.s), e: iso(c.e) }, w = Math.max(wOf(r.s, r.e), 6), dur = Math.round(wOf(r.s, r.e) / px);
+    var tip = (c.n || 'Congés') + '\n' + (c.s === c.e ? 'le ' + fmt(r.s) : fmt(r.s) + ' → ' + fmt(r.e) + ' (' + dur + ' j ouvré' + (dur > 1 ? 's' : '') + ')') +
+      '\nGlisser pour déplacer · bords pour étirer · clic droit pour modifier · double-clic pour supprimer';
+    return '<div class="bar edit cbar" data-k="c" data-part="' + i + '" style="left:' + x(r.s) + 'px;width:' + w + 'px;background:' + COLORS.c + '" title="' + esc(tip) + '">' + (w > 50 ? esc(c.n || 'Congés') : '') + '</div>';
+  }).join('');
+  var html = '<div class="row congerow"><div class="left" title="Congés et fermetures : glissez sur la ligne pour en ajouter"><span>🏖 Congés / fermetures</span>' +
+    '<button class="rowbtn show" data-addconge="1" title="Ajouter une période de congés">＋</button></div>' +
+    '<div class="track draw" data-row="' + CONGES + '" data-part="" style="width:' + W + 'px">' + cbars + '</div></div>';
   var groups = state.group
     ? state.lists.map(function (list) { return { name: list.name, rows: rows.filter(function (r) { return r.idList === list.id; }) }; })
     : [{ name: null, rows: rows }];
@@ -351,7 +391,8 @@ document.addEventListener('click', function (e) {
   var rb = e.target.closest('.rowbtn');
   if (rb) {
     e.stopPropagation();
-    if (rb.dataset.addpart) openPartPop(e.clientX, e.clientY, rb.dataset.addpart, null);
+    if (rb.dataset.addconge) openCongePop(e.clientX, e.clientY, -1, isoOf(day0(new Date())));
+    else if (rb.dataset.addpart) openPartPop(e.clientX, e.clientY, rb.dataset.addpart, null);
     else if (rb.dataset.editpart) openPartPop(e.clientX, e.clientY, rb.dataset.row, rb.dataset.editpart);
     else if (rb.dataset.delpart) deletePart(rb.dataset.row, rb.dataset.delpart);
     return;
@@ -409,6 +450,11 @@ document.addEventListener('contextmenu', function (e) {
   if (!track || !state.geo) return;
   e.preventDefault();
   var bar = e.target.closest('.bar.edit');
+  if (track.dataset.row === CONGES) {
+    var dd = state.geo.work[idxAt(e.clientX - track.getBoundingClientRect().left)];
+    openCongePop(e.clientX, e.clientY, bar ? +bar.dataset.part : -1, isoOf(dd));
+    return;
+  }
   var o = { cardId: track.dataset.row, partId: track.dataset.part, isNew: !bar, focus: 's' };
   if (bar) {
     o.k = bar.dataset.k; o.r = getRange(o.cardId, o.partId, o.k);
@@ -443,6 +489,52 @@ function openPop(cx, cy, o) {
   var f = document.getElementById(o.focus === 'e' ? 'popE' : 'popS');
   f.focus();
 }
+/* ---------- Congés / fermetures (données du tableau, communes à tous) ---------- */
+function saveConge(idx, range, name) {
+  var before = state.conges.slice(), list = JSON.parse(JSON.stringify(before));
+  if (!range) { if (idx >= 0) list.splice(idx, 1); }
+  else if (idx >= 0) { list[idx].s = range[0]; list[idx].e = range[1]; if (name !== null) list[idx].n = name; }
+  else list.push({ s: range[0], e: range[1], n: name || '' });
+  list.sort(function (a, b) { return a.s < b.s ? -1 : a.s > b.s ? 1 : 0; });
+  if (JSON.stringify(list).length > 8000) { toast('Trop de périodes de congés enregistrées (limite Trello).'); return Promise.resolve(false); }
+  return writeConges(list).then(function (ok) {
+    if (ok && !range) toast(NAMES_DEL.c, function () { writeConges(before); });
+    return ok;
+  });
+}
+function writeConges(list) {
+  var prev = state.conges;
+  state.conges = list; render();
+  return (list.length ? t.set('board', 'shared', 'conges', list) : t.remove('board', 'shared', 'conges'))
+    .then(function () { return true; })
+    .catch(function (err) { state.conges = prev; render(); toast('Enregistrement impossible : ' + (err && err.message || err)); return false; });
+}
+function openCongePop(cx, cy, idx, dateIso) {
+  var c = idx >= 0 ? state.conges[idx] : { s: dateIso, e: dateIso, n: '' };
+  pop = { conge: true, idx: idx };
+  var el = document.getElementById('pop');
+  el.innerHTML =
+    '<div class="pop-title">🏖 ' + (idx >= 0 ? 'Modifier la période' : 'Nouvelle période de congés') + '</div>' +
+    '<label class="pop-f">Libellé <input type="text" id="popName" value="' + esc(c.n || '') + '" placeholder="ex. Fermeture été (facultatif)"></label>' +
+    '<label class="pop-f">Début <input type="date" id="popS" value="' + (c.s || '') + '"></label>' +
+    '<label class="pop-f">Fin <input type="date" id="popE" value="' + (c.e || '') + '"></label>' +
+    '<div class="pop-btns"><button class="primary" id="popOk">' + (idx >= 0 ? 'Enregistrer' : 'Ajouter') + '</button>' +
+    (idx >= 0 ? '<button class="danger" id="popDel">Supprimer</button>' : '') +
+    '<button id="popCancel">Annuler</button></div>';
+  el.className = 'open wide';
+  var w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.max(8, Math.min(cx, window.innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(cy, window.innerHeight - h - 8)) + 'px';
+  document.getElementById(idx >= 0 ? 'popS' : 'popName').focus();
+}
+function congeSave() {
+  var r = rangeOf(document.getElementById('popS').value, document.getElementById('popE').value);
+  if (!r) { document.getElementById('popS').classList.add('err'); return; }
+  var o = pop, name = document.getElementById('popName').value.trim();
+  closePop();
+  saveConge(o.idx, r, name);
+}
+
 /* Ajouter / modifier une partie (nom + dates facultatives) */
 function openPartPop(cx, cy, cardId, pid) {
   var row = state.cards.filter(function (r) { return r.id === cardId; })[0] || {};
@@ -512,12 +604,12 @@ function popSave() {
 }
 document.getElementById('pop').addEventListener('click', function (e) {
   e.stopPropagation();
-  if (e.target.id === 'popOk') { if (pop && pop.part) partSave(); else popSave(); }
+  if (e.target.id === 'popOk') { if (pop && pop.conge) congeSave(); else if (pop && pop.part) partSave(); else popSave(); }
   else if (e.target.id === 'popCancel') closePop();
-  else if (e.target.id === 'popDel') { var o = pop; closePop(); savePeriod(o.cardId, o.partId, o.k, null); }
+  else if (e.target.id === 'popDel') { var o = pop; closePop(); if (o.conge) saveConge(o.idx, null, null); else savePeriod(o.cardId, o.partId, o.k, null); }
 });
 document.getElementById('pop').addEventListener('keydown', function (e) {
-  if (e.key === 'Enter') { e.preventDefault(); if (pop && pop.part) partSave(); else popSave(); }
+  if (e.key === 'Enter') { e.preventDefault(); if (pop && pop.conge) congeSave(); else if (pop && pop.part) partSave(); else popSave(); }
   if (e.key === 'Escape') { e.preventDefault(); closePop(); }
 });
 document.addEventListener('pointerdown', function (e) { if (pop && !e.target.closest('#pop')) closePop(); }, true);
@@ -578,6 +670,7 @@ function toast(msg, undo) {
 
 /* Enregistre une période (range = [début, fin] ISO, ou null pour supprimer) sur la carte ou une de ses parties */
 function savePeriod(cardId, partId, k, range) {
+  if (cardId === CONGES) return saveConge(partId === '' ? -1 : +partId, range, null);
   var before = state.plans[cardId] || {};
   var plan = JSON.parse(JSON.stringify(before));
   var target = plan;
@@ -633,7 +726,7 @@ document.addEventListener('pointerdown', function (e) {
     d.mode = e.clientX - br.left < 7 ? 'left' : br.right - e.clientX < 7 ? 'right' : 'move';
     d.ghostFrom = bar;
   } else {
-    d.k = state.tool; d.mode = 'draw'; d.s = d.e = d.a = idxAt(px);
+    d.k = d.cardId === CONGES ? 'c' : state.tool; d.mode = 'draw'; d.s = d.e = d.a = idxAt(px);
   }
   drag = d;
   e.preventDefault();
@@ -679,6 +772,7 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && drag) { if (drag.ghost) drag.ghost.remove(); if (drag.ghostFrom) drag.ghostFrom.style.opacity = ''; drag = null; }
 });
 function getRange(cardId, partId, k) {
+  if (cardId === CONGES) { var c = state.conges[+partId]; return c ? [c.s, c.e] : null; }
   var p = state.plans[cardId] || {};
   if (partId) p = (p.items || {})[partId] || {};
   return p[k];

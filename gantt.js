@@ -11,7 +11,7 @@ var COLORS = { e: '#579dff', p: '#faa53d', trello: '#b3b9c4' };
 var NAMES = { e: 'Étude', p: 'Pose', trello: 'Dates Trello' };
 var NAMES_DEL = { e: 'Étude supprimée', p: 'Pose supprimée' };
 
-var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', hiddenLists: [], lists: [], cards: [], plans: {}, geo: null };
+var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', hiddenLists: [], search: '', lists: [], cards: [], plans: {}, geo: null };
 var PREFS = ['zoom', 'hideDone', 'showParts', 'showUndated', 'sort', 'group', 'tool', 'hiddenLists'];
 var MAX = 4096; // limite Trello de stockage par carte
 
@@ -35,6 +35,12 @@ function isoWeek(d) {
   return Math.ceil(((x - y0) / DAY + 1) / 7);
 }
 function short(d) { return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2); }
+function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+function matches(r) {
+  if (!state.search) return true;
+  var q = norm(state.search);
+  return norm(r.name).indexOf(q) >= 0 || r.parts.some(function (p) { return norm(p.name).indexOf(q) >= 0; });
+}
 function span(r) { return r ? { s: iso(r[0]), e: iso(r[1]) } : null; }
 
 /* Lit les données Étude / Pose enregistrées sur une carte */
@@ -104,6 +110,7 @@ function load() {
     return Promise.all(cards.map(planningOf)).then(function (plans) {
       state.plans = {};
       state.cards = cards.map(function (c, i) { state.plans[c.id] = plans[i] || {}; var r = toRow(c, plans[i]); r.order = i; return r; });
+      document.getElementById('cardnames').innerHTML = state.cards.map(function (r) { return '<option value="' + esc(r.name) + '">'; }).join('');
       render();
     });
   }).catch(function (err) {
@@ -131,7 +138,7 @@ function render() {
   var chart = document.getElementById('chart');
   var px = ZOOMS[state.zoom];
   var rows = state.cards.filter(function (r) {
-    return !(state.hideDone && r.done) && state.hiddenLists.indexOf(r.idList) < 0 && (state.showUndated || allBars(r, state.showParts).length);
+    return !(state.hideDone && r.done) && state.hiddenLists.indexOf(r.idList) < 0 && matches(r) && (state.showUndated || allBars(r, state.showParts).length);
   });
   var undated = state.cards.filter(function (r) { return !allBars(r, true).length; }).length;
   var planned = state.cards.length - undated;
@@ -143,10 +150,10 @@ function render() {
     planned + ' carte(s) planifiée(s) · ' + undated + ' sans date' + (state.showUndated ? '' : ' (masquées)');
   renderListMenu();
 
-  if (!rows.length) {
-    chart.innerHTML = '<p class="msg">Aucune carte à afficher. Vérifiez les listes affichées (bouton « Listes ») ou cochez « Afficher les cartes sans date ».</p>';
-    return;
-  }
+  var emptyMsg = '';
+  if (!rows.length) emptyMsg = state.search
+    ? 'Aucun dossier ne correspond à « ' + esc(state.search) + ' ».'
+    : 'Aucune carte à afficher. Vérifiez les listes affichées (bouton « Listes ») ou cochez « Afficher les cartes sans date ».';
 
   // Bornes de la frise
   var today = day0(new Date()), min = today, max = today;
@@ -249,9 +256,11 @@ function render() {
   chart.innerHTML =
     '<div class="grid" style="width:' + (LEFT_W + W) + 'px">' +
       '<div class="overlay" style="left:' + LEFT_W + 'px;width:' + W + 'px">' + bg + '</div>' +
-      '<div class="row head"><div class="left">Liste / dossier</div><div class="track" style="width:' + W + 'px">' + top + mid + bottom + '</div></div>' +
-      html +
+      '<div class="row head"><div class="left"><div class="search"><input id="search" type="text" list="cardnames" autocomplete="off" placeholder="Rechercher un dossier…" value="' + esc(state.search) + '">' +
+        (state.search ? '<button id="clearSearch" title="Effacer la recherche">✕</button>' : '') + '</div></div><div class="track" style="width:' + W + 'px">' + top + mid + bottom + '</div></div>' +
+      html + (emptyMsg ? '<p class="msg">' + emptyMsg + '</p>' : '') +
     '</div>';
+
   chart.dataset.todayX = LEFT_W + x(today);
   if (keep && !state.rezoomed) { chart.scrollLeft = scroll; chart.scrollTop = scrollTop; } else scrollToToday();
   state.rezoomed = false;
@@ -292,6 +301,86 @@ function applyPrefs(p) {
   document.getElementById('showUndated').checked = state.showUndated;
   setTool(state.tool);
 }
+
+/* ---------- Recherche ---------- */
+document.addEventListener('input', function (e) {
+  if (e.target.id !== 'search') return;
+  state.search = e.target.value;
+  var pos = e.target.selectionStart;
+  render();
+  var firstBar = document.querySelector('#chart .bar, #chart .milestone, #chart .summary');
+  if (state.search && firstBar) document.getElementById('chart').scrollLeft = Math.max(0, firstBar.offsetLeft - 60);
+  var si = document.getElementById('search'); // le champ est recréé : on lui rend la main
+  si.focus();
+  try { si.setSelectionRange(pos, pos); } catch (err) { /* ignore */ }
+});
+document.addEventListener('click', function (e) {
+  if (e.target.id === 'clearSearch') { state.search = ''; render(); }
+});
+
+/* ---------- Clic droit : saisie manuelle des dates ---------- */
+var pop = null;
+document.addEventListener('contextmenu', function (e) {
+  var track = e.target.closest('.track.draw');
+  if (!track || !state.geo) return;
+  e.preventDefault();
+  var bar = e.target.closest('.bar.edit');
+  var o = { cardId: track.dataset.row, partId: track.dataset.part, isNew: !bar, focus: 's' };
+  if (bar) {
+    o.k = bar.dataset.k; o.r = getRange(o.cardId, o.partId, o.k);
+    var br = bar.getBoundingClientRect();
+    o.focus = e.clientX - br.left > br.width / 2 ? 'e' : 's';
+  } else {
+    var d = state.geo.work[idxAt(e.clientX - track.getBoundingClientRect().left)];
+    o.k = state.tool === 'p' ? 'p' : 'e'; o.r = [isoOf(d), isoOf(d)];
+  }
+  openPop(e.clientX, e.clientY, o);
+});
+function openPop(cx, cy, o) {
+  pop = o;
+  var row = state.cards.filter(function (r) { return r.id === o.cardId; })[0] || {};
+  var part = o.partId ? (row.parts || []).filter(function (p) { return p.pid === o.partId; })[0] : null;
+  var el = document.getElementById('pop');
+  el.innerHTML =
+    '<div class="pop-title">' + esc(row.name || '') + (part ? ' <span>↳ ' + esc(part.name) + '</span>' : '') + '</div>' +
+    (o.isNew
+      ? '<div class="pop-type"><label><input type="radio" name="ptype" value="e"' + (o.k === 'e' ? ' checked' : '') + '> <i class="e"></i>Étude</label>' +
+        '<label><input type="radio" name="ptype" value="p"' + (o.k === 'p' ? ' checked' : '') + '> <i class="p"></i>Pose</label></div>'
+      : '<div class="pop-type"><i class="' + o.k + '"></i>' + NAMES[o.k] + '</div>') +
+    '<label class="pop-f">Début <input type="date" id="popS" value="' + o.r[0] + '"></label>' +
+    '<label class="pop-f">Fin <input type="date" id="popE" value="' + o.r[1] + '"></label>' +
+    '<div class="pop-btns"><button class="primary" id="popOk">Enregistrer</button>' +
+    (o.isNew ? '' : '<button class="danger" id="popDel">Supprimer</button>') +
+    '<button id="popCancel">Annuler</button></div>';
+  el.className = 'open';
+  var w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.max(8, Math.min(cx, window.innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(cy, window.innerHeight - h - 8)) + 'px';
+  var f = document.getElementById(o.focus === 'e' ? 'popE' : 'popS');
+  f.focus();
+}
+function closePop() { pop = null; document.getElementById('pop').className = ''; }
+function popSave() {
+  var s = document.getElementById('popS').value, en = document.getElementById('popE').value;
+  if (!s && !en) { closePop(); return; }
+  s = s || en; en = en || s;
+  if (s > en) { var tmp = s; s = en; en = tmp; }
+  var k = pop.k;
+  if (pop.isNew) { var c = document.querySelector('input[name=ptype]:checked'); if (c) k = c.value; }
+  var o = pop; closePop();
+  savePeriod(o.cardId, o.partId, k, [s, en]);
+}
+document.getElementById('pop').addEventListener('click', function (e) {
+  e.stopPropagation();
+  if (e.target.id === 'popOk') popSave();
+  else if (e.target.id === 'popCancel') closePop();
+  else if (e.target.id === 'popDel') { var o = pop; closePop(); savePeriod(o.cardId, o.partId, o.k, null); }
+});
+document.getElementById('pop').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); popSave(); }
+  if (e.key === 'Escape') { e.preventDefault(); closePop(); }
+});
+document.addEventListener('pointerdown', function (e) { if (pop && !e.target.closest('#pop')) closePop(); }, true);
 
 /* ---------- Choix des listes affichées ---------- */
 function renderListMenu() {

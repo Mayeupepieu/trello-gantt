@@ -3,6 +3,17 @@ var t = window.TrelloPowerUp.iframe();
 var KEY = 'planning';
 var MAX = 4096; // limite Trello de stockage par carte
 
+/* Thème clair / sombre : suit celui de Trello */
+function applyTheme() {
+  var th = null;
+  try { var c = t.getContext() || {}; th = c.theme || c.initialTheme; } catch (e) { /* ignore */ }
+  if (!th) th = document.documentElement.getAttribute('data-color-mode');
+  if (!th || th === 'auto' || th === 'system') th = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.classList.toggle('dark', th === 'dark');
+}
+applyTheme();
+if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+
 var state = { card: null, checklists: [], data: { e: null, p: null, items: {} } };
 
 function esc(s) {
@@ -20,8 +31,10 @@ function rowHtml(id, name, rec, opts) {
     : esc(name);
   return '<tr class="' + (opts.main ? 'main' : '') + '" data-id="' + id + '">' +
     '<td class="name' + (opts.done ? ' done' : '') + '">' + nameCell + '</td>' +
-    '<td class="etude"><input type="date" data-f="e0" value="' + e[0] + '"><span class="sep">→</span><input type="date" data-f="e1" value="' + e[1] + '"></td>' +
-    '<td class="pose"><input type="date" data-f="p0" value="' + p[0] + '"><span class="sep">→</span><input type="date" data-f="p1" value="' + p[1] + '"></td>' +
+    '<td class="etude"><input type="date" data-f="e0" value="' + e[0] + '"><span class="sep">→</span><input type="date" data-f="e1" value="' + e[1] + '">' +
+      '<button class="clr" data-clr="e" title="Effacer les dates d\'étude">✕</button></td>' +
+    '<td class="pose"><input type="date" data-f="p0" value="' + p[0] + '"><span class="sep">→</span><input type="date" data-f="p1" value="' + p[1] + '">' +
+      '<button class="clr" data-clr="p" title="Effacer les dates de pose">✕</button></td>' +
     '<td>' + (opts.deletable ? '<button class="del" data-del="' + id + '" title="Supprimer">✕</button>' : '') + '</td></tr>';
 }
 var HEAD = '<tr><th></th><th class="etude">Étude (début → fin)</th><th class="pose">Pose (début → fin)</th><th></th></tr>';
@@ -109,7 +122,12 @@ function save() {
 
 document.addEventListener('click', function (ev) {
   var el = ev.target;
-  if (el.id === 'save') save();
+  if (el.dataset && el.dataset.clr) {
+    var tr = el.closest('tr');
+    tr.querySelector('[data-f="' + el.dataset.clr + '0"]').value = '';
+    tr.querySelector('[data-f="' + el.dataset.clr + '1"]').value = '';
+  }
+  else if (el.id === 'save') save();
   else if (el.id === 'cancel') t.closeModal();
   else if (el.id === 'add') {
     collect();

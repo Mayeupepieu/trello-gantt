@@ -9,9 +9,10 @@ var DAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
 var MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 var COLORS = { e: '#579dff', p: '#faa53d', trello: '#b3b9c4' };
 var NAMES = { e: 'Étude', p: 'Pose', trello: 'Dates Trello' };
+var NAMES_DEL = { e: 'Étude supprimée', p: 'Pose supprimée' };
 
-var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', lists: [], cards: [], plans: {}, geo: null };
-var PREFS = ['zoom', 'hideDone', 'showParts', 'showUndated', 'sort', 'group', 'tool'];
+var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', hiddenLists: [], lists: [], cards: [], plans: {}, geo: null };
+var PREFS = ['zoom', 'hideDone', 'showParts', 'showUndated', 'sort', 'group', 'tool', 'hiddenLists'];
 var MAX = 4096; // limite Trello de stockage par carte
 
 function esc(s) {
@@ -130,7 +131,7 @@ function render() {
   var chart = document.getElementById('chart');
   var px = ZOOMS[state.zoom];
   var rows = state.cards.filter(function (r) {
-    return !(state.hideDone && r.done) && (state.showUndated || allBars(r, state.showParts).length);
+    return !(state.hideDone && r.done) && state.hiddenLists.indexOf(r.idList) < 0 && (state.showUndated || allBars(r, state.showParts).length);
   });
   var undated = state.cards.filter(function (r) { return !allBars(r, true).length; }).length;
   var planned = state.cards.length - undated;
@@ -140,9 +141,10 @@ function render() {
   });
   document.getElementById('info').textContent =
     planned + ' carte(s) planifiée(s) · ' + undated + ' sans date' + (state.showUndated ? '' : ' (masquées)');
+  renderListMenu();
 
   if (!rows.length) {
-    chart.innerHTML = '<p class="msg">Aucune carte planifiée. Cochez « Afficher les cartes sans date » pour dessiner directement les périodes sur le planning.</p>';
+    chart.innerHTML = '<p class="msg">Aucune carte à afficher. Vérifiez les listes affichées (bouton « Listes ») ou cochez « Afficher les cartes sans date ».</p>';
     return;
   }
 
@@ -291,10 +293,45 @@ function applyPrefs(p) {
   setTool(state.tool);
 }
 
+/* ---------- Choix des listes affichées ---------- */
+function renderListMenu() {
+  var shown = state.lists.filter(function (l) { return state.hiddenLists.indexOf(l.id) < 0; }).length;
+  document.getElementById('listsBtn').textContent = 'Listes (' + shown + '/' + state.lists.length + ') ▾';
+  var counts = {};
+  state.cards.forEach(function (r) { counts[r.idList] = (counts[r.idList] || 0) + 1; });
+  document.getElementById('listsMenu').innerHTML =
+    '<div class="lm-actions"><button data-lists="all">Tout afficher</button><button data-lists="none">Tout masquer</button></div>' +
+    state.lists.map(function (l) {
+      return '<label><input type="checkbox" data-list="' + l.id + '"' + (state.hiddenLists.indexOf(l.id) < 0 ? ' checked' : '') + '> ' +
+        esc(l.name) + ' <em>' + (counts[l.id] || 0) + '</em></label>';
+    }).join('');
+}
+document.getElementById('listsBtn').addEventListener('click', function (e) {
+  e.stopPropagation();
+  document.getElementById('listsMenu').classList.toggle('open');
+});
+document.getElementById('listsMenu').addEventListener('click', function (e) {
+  e.stopPropagation();
+  var a = e.target.closest('[data-lists]');
+  if (a) {
+    state.hiddenLists = a.dataset.lists === 'all' ? [] : state.lists.map(function (l) { return l.id; });
+    savePrefs(); render();
+  }
+});
+document.getElementById('listsMenu').addEventListener('change', function (e) {
+  var id = e.target.dataset.list;
+  if (!id) return;
+  state.hiddenLists = state.hiddenLists.filter(function (x) { return x !== id; });
+  if (!e.target.checked) state.hiddenLists.push(id);
+  savePrefs(); render();
+});
+document.addEventListener('click', function () { document.getElementById('listsMenu').classList.remove('open'); });
+
 /* ---------- Dessin direct sur le planning ---------- */
 function setTool(k) {
   state.tool = k;
   document.querySelectorAll('[data-tool]').forEach(function (b) { b.classList.toggle('active', b.dataset.tool === k); });
+  document.body.classList.toggle('erase', k === 'x');
 }
 function isoOf(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
 function idxAt(px) { var g = state.geo; return Math.max(0, Math.min(g.work.length - 1, Math.floor(px / g.px))); }
@@ -320,7 +357,7 @@ function savePeriod(cardId, partId, k, range) {
   if (!plan.items || !Object.keys(plan.items).length) delete plan.items;
   if (JSON.stringify(plan).length > MAX - 50) { toast('Trop de données pour cette carte (limite Trello).'); return Promise.resolve(false); }
   return writePlan(cardId, plan).then(function (ok) {
-    if (ok && !range) toast(NAMES[k] + ' supprimée', function () { writePlan(cardId, before); });
+    if (ok && !range) toast(NAMES_DEL[k], function () { writePlan(cardId, before); });
     return ok;
   });
 }
@@ -353,6 +390,11 @@ document.addEventListener('pointerdown', function (e) {
   if (!track) return;
   var rect = track.getBoundingClientRect(), px = e.clientX - rect.left;
   var bar = e.target.closest('.bar.edit');
+  if (state.tool === 'x') { // gomme : un clic sur une barre la supprime
+    if (bar) savePeriod(track.dataset.row, track.dataset.part, bar.dataset.k, null);
+    e.preventDefault();
+    return;
+  }
   var d = { track: track, cardId: track.dataset.row, partId: track.dataset.part, x0: e.clientX, moved: false };
   if (bar) {
     var r = getRange(d.cardId, d.partId, bar.dataset.k);

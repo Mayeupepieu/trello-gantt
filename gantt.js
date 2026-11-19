@@ -10,8 +10,9 @@ var MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août'
 var COLORS = { e: '#579dff', p: '#faa53d', trello: '#b3b9c4' };
 var NAMES = { e: 'Étude', p: 'Pose', trello: 'Dates Trello' };
 
-var state = { zoom: 'semaine', hideDone: false, showParts: true, sort: 'pose', group: true, lists: [], cards: [] };
-var PREFS = ['zoom', 'hideDone', 'showParts', 'sort', 'group'];
+var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', lists: [], cards: [], plans: {}, geo: null };
+var PREFS = ['zoom', 'hideDone', 'showParts', 'showUndated', 'sort', 'group', 'tool'];
+var MAX = 4096; // limite Trello de stockage par carte
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -48,7 +49,7 @@ function planningOf(card) {
 /* Transforme une carte en ligne(s) de Gantt */
 function toRow(c, p) {
   p = p || {};
-  var row = { id: c.id, name: c.name, idList: c.idList, done: !!c.dueComplete, bars: [], parts: [] };
+  var row = { id: c.id, name: c.name, idList: c.idList, done: !!c.dueComplete, bars: [], parts: [], card: c };
   if (p.e) row.bars.push({ k: 'e', r: span(p.e) });
   if (p.p) row.bars.push({ k: 'p', r: span(p.p) });
   if (!row.bars.length && (c.start || c.due)) {
@@ -60,11 +61,11 @@ function toRow(c, p) {
     var it = p.items[k], bars = [];
     if (it.e) bars.push({ k: 'e', r: span(it.e) });
     if (it.p) bars.push({ k: 'p', r: span(it.p) });
-    if (bars.length) row.parts.push({ id: c.id, name: it.n || 'Partie', bars: bars });
+    row.parts.push({ id: c.id, pid: k, name: it.n || 'Partie', bars: bars });
   });
   return row;
 }
-function first(bars) { return Math.min.apply(null, bars.map(function (b) { return b.r.s; })); }
+function first(bars) { return bars.length ? Math.min.apply(null, bars.map(function (b) { return b.r.s; })) : Infinity; }
 /* Première date d'un type (e = étude, p = pose) sur la carte ou ses parties ; Infinity si aucune */
 function firstOf(row, k) {
   var b = allBars(row, true).filter(function (z) { return z.k === k; });
@@ -100,7 +101,8 @@ function load() {
     var cards = res[0].filter(function (c) { return !c.closed; });
     state.lists = res[1];
     return Promise.all(cards.map(planningOf)).then(function (plans) {
-      state.cards = cards.map(function (c, i) { var r = toRow(c, plans[i]); r.order = i; return r; });
+      state.plans = {};
+      state.cards = cards.map(function (c, i) { state.plans[c.id] = plans[i] || {}; var r = toRow(c, plans[i]); r.order = i; return r; });
       render();
     });
   }).catch(function (err) {
@@ -109,17 +111,18 @@ function load() {
 }
 
 /* Dessine les barres d'une ligne ; si Étude et Pose se chevauchent, elles partagent la hauteur */
-function barsHtml(bars, x, px, label, cardId, wOf) {
+function barsHtml(bars, x, px, label, cardId, wOf, partId) {
   var overlap = bars.length === 2 && bars[0].r.s <= bars[1].r.e && bars[1].r.s <= bars[0].r.e;
   return bars.map(function (b, i) {
     var dur = Math.round(wOf(b.r.s, b.r.e) / px);
     var tip = label + '\n' + NAMES[b.k] + ' : ' + (+b.r.s === +b.r.e ? 'le ' + fmt(b.r.s) : fmt(b.r.s) + ' → ' + fmt(b.r.e) + ' (' + dur + ' j ouvré' + (dur > 1 ? 's' : '') + ')');
     if (b.milestone)
-      return '<div class="milestone" data-card="' + cardId + '" style="left:' + (x(b.r.s) + px / 2 - 8) + 'px;background:' + COLORS[b.k] + '" title="' + esc(tip) + '"></div>';
+      return '<div class="milestone" style="left:' + (x(b.r.s) + px / 2 - 8) + 'px;background:' + COLORS[b.k] + '" title="' + esc(tip) + '"></div>';
     var w = Math.max(wOf(b.r.s, b.r.e), 6);
     var cls = 'bar' + (overlap ? (i === 0 ? ' upper' : ' lower') : '');
     var txt = !overlap && w > 50 ? NAMES[b.k] : '';
-    return '<div class="' + cls + '" data-card="' + cardId + '" style="left:' + x(b.r.s) + 'px;width:' + w + 'px;background:' + COLORS[b.k] + '" title="' + esc(tip) + '">' + txt + '</div>';
+    if (b.k !== 'trello') { cls += ' edit'; tip += '\nGlisser pour déplacer · bords pour étirer · double-clic pour supprimer'; }
+    return '<div class="' + cls + '" data-k="' + b.k + '" data-part="' + (partId || '') + '" style="left:' + x(b.r.s) + 'px;width:' + w + 'px;background:' + COLORS[b.k] + '" title="' + esc(tip) + '">' + txt + '</div>';
   }).join('');
 }
 
@@ -127,18 +130,19 @@ function render() {
   var chart = document.getElementById('chart');
   var px = ZOOMS[state.zoom];
   var rows = state.cards.filter(function (r) {
-    return !(state.hideDone && r.done) && allBars(r, state.showParts).length;
+    return !(state.hideDone && r.done) && (state.showUndated || allBars(r, state.showParts).length);
   });
-  var hidden = state.cards.filter(function (r) { return !allBars(r, true).length; }).length;
+  var undated = state.cards.filter(function (r) { return !allBars(r, true).length; }).length;
+  var planned = state.cards.length - undated;
 
   document.querySelectorAll('[data-zoom]').forEach(function (b) {
     b.classList.toggle('active', b.dataset.zoom === state.zoom);
   });
   document.getElementById('info').textContent =
-    rows.length + ' carte(s) planifiée(s)' + (hidden ? ' · ' + hidden + ' sans date' : '');
+    planned + ' carte(s) planifiée(s) · ' + undated + ' sans date' + (state.showUndated ? '' : ' (masquées)');
 
   if (!rows.length) {
-    chart.innerHTML = '<p class="msg">Aucune carte planifiée. Ouvrez une carte et cliquez sur « Planning étude / pose » pour saisir ses dates.</p>';
+    chart.innerHTML = '<p class="msg">Aucune carte planifiée. Cochez « Afficher les cartes sans date » pour dessiner directement les périodes sur le planning.</p>';
     return;
   }
 
@@ -150,6 +154,8 @@ function render() {
   // Frise en jours ouvrés uniquement (lundi → vendredi), qui commence un lundi
   min = monday(addDays(min, -3));
   max = addDays(max, state.zoom === 'mois' ? 35 : 14);
+  var room = addDays(today, state.zoom === 'mois' ? 270 : state.zoom === 'semaine' ? 100 : 45); // place pour dessiner
+  if (max < room) max = room;
   var work = [], pos = {}; // pos[clé jour] = nb de jours ouvrés avant ce jour
   for (var c = new Date(min), n = 0; c <= addDays(max, 1); c = addDays(c, 1)) {
     pos[key(c)] = n;
@@ -158,6 +164,7 @@ function render() {
   var W = work.length * px;
   var x = function (d) { var v = pos[key(d)]; return (v == null ? (d < min ? 0 : work.length) : v) * px; };
   var wOf = function (s, e) { return x(addDays(e, 1)) - x(s); };
+  state.geo = { work: work, px: px, x: x };
 
   // Fond : un trait fin par jour, un trait marqué par semaine, une semaine sur deux grisée, ligne du jour
   var bg = '';
@@ -220,23 +227,23 @@ function render() {
       var b = r.bars;
       // Carte sans dates propres mais avec des parties : trait de synthèse
       var extra = '';
-      if (!b.length && r.parts.length) {
+      if (!b.length && allBars(r, true).length) {
         var pb = allBars(r, true);
         var s = pb.reduce(function (m, z) { return z.r.s < m ? z.r.s : m; }, pb[0].r.s);
         var e = pb.reduce(function (m, z) { return z.r.e > m ? z.r.e : m; }, pb[0].r.e);
         extra = '<div class="summary" style="left:' + x(s) + 'px;width:' + Math.max(wOf(s, e), 6) + 'px" title="Ensemble des parties"></div>';
       }
       html += '<div class="row cardrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(r.name) + '"><span>' + esc(r.name) + '</span>' + hint(r) + '</div>' +
-        '<div class="track" style="width:' + W + 'px">' + extra + barsHtml(b, x, px, r.name, r.id, wOf) + '</div></div>';
+        '<div class="track draw" data-row="' + r.id + '" data-part="" style="width:' + W + 'px">' + extra + barsHtml(b, x, px, r.name, r.id, wOf, '') + '</div></div>';
 
       if (state.showParts) r.parts.slice().sort(function (a, b) { var d = partKey(a) - partKey(b); return isNaN(d) ? 0 : d; }).forEach(function (p) {
         html += '<div class="row partrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(p.name) + '"><span>↳ ' + esc(p.name) + '</span></div>' +
-          '<div class="track" style="width:' + W + 'px">' + barsHtml(p.bars, x, px, r.name + ' — ' + p.name, r.id, wOf) + '</div></div>';
+          '<div class="track draw" data-row="' + r.id + '" data-part="' + esc(p.pid) + '" style="width:' + W + 'px">' + barsHtml(p.bars, x, px, r.name + ' — ' + p.name, r.id, wOf, p.pid) + '</div></div>';
       });
     });
   });
 
-  var scroll = chart.scrollLeft, keep = chart.querySelector('.grid');
+  var scroll = chart.scrollLeft, scrollTop = chart.scrollTop, keep = chart.querySelector('.grid');
   chart.innerHTML =
     '<div class="grid" style="width:' + (LEFT_W + W) + 'px">' +
       '<div class="overlay" style="left:' + LEFT_W + 'px;width:' + W + 'px">' + bg + '</div>' +
@@ -244,7 +251,7 @@ function render() {
       html +
     '</div>';
   chart.dataset.todayX = LEFT_W + x(today);
-  if (keep && !state.rezoomed) chart.scrollLeft = scroll; else scrollToToday();
+  if (keep && !state.rezoomed) { chart.scrollLeft = scroll; chart.scrollTop = scrollTop; } else scrollToToday();
   state.rezoomed = false;
 }
 
@@ -256,6 +263,8 @@ function scrollToToday() {
 document.addEventListener('click', function (e) {
   var el = e.target.closest('[data-card]');
   if (el) t.showCard(el.dataset.card);
+  var tb = e.target.closest('button[data-tool]');
+  if (tb) { setTool(tb.dataset.tool); savePrefs(); }
   var z = e.target.closest('[data-zoom]');
   if (z) { state.zoom = z.dataset.zoom; state.rezoomed = true; savePrefs(); render(); }
 });
@@ -264,6 +273,7 @@ document.getElementById('hideDone').addEventListener('change', function (e) { st
 document.getElementById('showParts').addEventListener('change', function (e) { state.showParts = e.target.checked; savePrefs(); render(); });
 document.getElementById('sort').addEventListener('change', function (e) { state.sort = e.target.value; savePrefs(); render(); });
 document.getElementById('group').addEventListener('change', function (e) { state.group = e.target.checked; savePrefs(); render(); });
+document.getElementById('showUndated').addEventListener('change', function (e) { state.showUndated = e.target.checked; savePrefs(); render(); });
 
 /* Préférences d'affichage mémorisées pour chaque utilisateur */
 function savePrefs() {
@@ -277,6 +287,130 @@ function applyPrefs(p) {
   document.getElementById('group').checked = state.group;
   document.getElementById('showParts').checked = state.showParts;
   document.getElementById('hideDone').checked = state.hideDone;
+  document.getElementById('showUndated').checked = state.showUndated;
+  setTool(state.tool);
+}
+
+/* ---------- Dessin direct sur le planning ---------- */
+function setTool(k) {
+  state.tool = k;
+  document.querySelectorAll('[data-tool]').forEach(function (b) { b.classList.toggle('active', b.dataset.tool === k); });
+}
+function isoOf(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function idxAt(px) { var g = state.geo; return Math.max(0, Math.min(g.work.length - 1, Math.floor(px / g.px))); }
+function idxOf(d) { var g = state.geo; return Math.max(0, Math.min(g.work.length - 1, Math.round(g.x(d) / g.px))); }
+
+var toastTimer;
+function toast(msg, undo) {
+  var el = document.getElementById('toast');
+  el.innerHTML = esc(msg) + (undo ? ' <button id="undo">Annuler</button>' : '');
+  el.className = 'show';
+  if (undo) document.getElementById('undo').onclick = function () { el.className = ''; undo(); };
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.className = ''; }, undo ? 7000 : 4000);
+}
+
+/* Enregistre une période (range = [début, fin] ISO, ou null pour supprimer) sur la carte ou une de ses parties */
+function savePeriod(cardId, partId, k, range) {
+  var before = state.plans[cardId] || {};
+  var plan = JSON.parse(JSON.stringify(before));
+  var target = plan;
+  if (partId) { plan.items = plan.items || {}; target = plan.items[partId] = plan.items[partId] || { n: 'Partie' }; }
+  if (range) target[k] = range; else delete target[k];
+  if (!plan.items || !Object.keys(plan.items).length) delete plan.items;
+  if (JSON.stringify(plan).length > MAX - 50) { toast('Trop de données pour cette carte (limite Trello).'); return Promise.resolve(false); }
+  return writePlan(cardId, plan).then(function (ok) {
+    if (ok && !range) toast(NAMES[k] + ' supprimée', function () { writePlan(cardId, before); });
+    return ok;
+  });
+}
+function writePlan(cardId, plan) {
+  var prev = state.plans[cardId];
+  applyPlan(cardId, plan);
+  var empty = !plan.e && !plan.p && !(plan.items && Object.keys(plan.items).length);
+  return (empty ? t.remove(cardId, 'shared', KEY) : t.set(cardId, 'shared', KEY, plan))
+    .then(function () { return true; })
+    .catch(function (err) {
+      applyPlan(cardId, prev);
+      toast('Enregistrement impossible : ' + (err && err.message || err));
+      return false;
+    });
+}
+function applyPlan(cardId, plan) {
+  state.plans[cardId] = plan || {};
+  state.cards = state.cards.map(function (r) {
+    if (r.id !== cardId) return r;
+    var n = toRow(r.card, plan); n.order = r.order; return n;
+  });
+  render();
+}
+
+/* Glisser : dessiner une nouvelle période, déplacer une barre, ou étirer un de ses bords */
+var drag = null;
+document.addEventListener('pointerdown', function (e) {
+  if (e.button !== 0 || !state.geo) return;
+  var track = e.target.closest('.track.draw');
+  if (!track) return;
+  var rect = track.getBoundingClientRect(), px = e.clientX - rect.left;
+  var bar = e.target.closest('.bar.edit');
+  var d = { track: track, cardId: track.dataset.row, partId: track.dataset.part, x0: e.clientX, moved: false };
+  if (bar) {
+    var r = getRange(d.cardId, d.partId, bar.dataset.k);
+    if (!r) return;
+    d.k = bar.dataset.k; d.s = idxOf(iso(r[0])); d.e = idxOf(iso(r[1]));
+    var br = bar.getBoundingClientRect();
+    d.mode = e.clientX - br.left < 7 ? 'left' : br.right - e.clientX < 7 ? 'right' : 'move';
+    d.ghostFrom = bar;
+  } else {
+    d.k = state.tool; d.mode = 'draw'; d.s = d.e = d.a = idxAt(px);
+  }
+  drag = d;
+  e.preventDefault();
+});
+document.addEventListener('pointermove', function (e) {
+  if (!drag) return;
+  var dx = e.clientX - drag.x0;
+  if (!drag.moved && Math.abs(dx) < 4) return;
+  if (!drag.moved) {
+    drag.moved = true;
+    drag.ghost = document.createElement('div');
+    drag.ghost.className = 'bar ghost';
+    drag.ghost.style.background = COLORS[drag.k];
+    drag.track.appendChild(drag.ghost);
+    if (drag.ghostFrom) drag.ghostFrom.style.opacity = '.25';
+  }
+  var g = state.geo, step = Math.round(dx / g.px), s = drag.s, en = drag.e;
+  if (drag.mode === 'draw') {
+    var cur = idxAt(e.clientX - drag.track.getBoundingClientRect().left);
+    s = Math.min(drag.a, cur); en = Math.max(drag.a, cur);
+  } else if (drag.mode === 'move') {
+    step = Math.max(-s, Math.min(g.work.length - 1 - en, step)); s += step; en += step;
+  } else if (drag.mode === 'left') { s = Math.min(en, Math.max(0, s + step)); }
+  else { en = Math.max(s, Math.min(g.work.length - 1, en + step)); }
+  drag.ns = s; drag.ne = en;
+  drag.ghost.style.left = (s * g.px) + 'px';
+  drag.ghost.style.width = ((en - s + 1) * g.px) + 'px';
+  drag.ghost.textContent = NAMES[drag.k] + ' · ' + short(g.work[s]) + (en > s ? ' → ' + short(g.work[en]) : '') + ' (' + (en - s + 1) + ' j)';
+});
+document.addEventListener('pointerup', function () {
+  var d = drag; drag = null;
+  if (!d || !d.moved) return;
+  var g = state.geo;
+  savePeriod(d.cardId, d.partId, d.k, [isoOf(g.work[d.ns]), isoOf(g.work[d.ne])]);
+});
+document.addEventListener('dblclick', function (e) {
+  var bar = e.target.closest('.bar.edit');
+  if (!bar) return;
+  var track = bar.closest('.track.draw');
+  savePeriod(track.dataset.row, track.dataset.part, bar.dataset.k, null);
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && drag) { if (drag.ghost) drag.ghost.remove(); if (drag.ghostFrom) drag.ghostFrom.style.opacity = ''; drag = null; }
+});
+function getRange(cardId, partId, k) {
+  var p = state.plans[cardId] || {};
+  if (partId) p = (p.items || {})[partId] || {};
+  return p[k];
 }
 
 // Se redessine automatiquement quand le tableau change

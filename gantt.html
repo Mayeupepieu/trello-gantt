@@ -14,6 +14,10 @@
       <button data-zoom="mois">Mois</button>
     </div>
     <button id="today">Aujourd'hui</button>
+    <div class="group tools" role="group" aria-label="Outil de dessin" title="Glissez sur la ligne d'une carte pour dessiner une période">
+      <button data-tool="e" class="tool-e">✏ Étude</button>
+      <button data-tool="p" class="tool-p">✏ Pose</button>
+    </div>
     <label>Trier par
       <select id="sort">
         <option value="pose">Date de pose</option>
@@ -24,11 +28,13 @@
     </label>
     <label><input type="checkbox" id="group" checked> Regrouper par liste</label>
     <label><input type="checkbox" id="showParts" checked> Afficher les parties</label>
+    <label><input type="checkbox" id="showUndated" checked> Afficher les cartes sans date</label>
     <label><input type="checkbox" id="hideDone"> Masquer les cartes terminées</label>
     <span class="legend"><i style="background:#579dff"></i>Étude <i style="background:#faa53d"></i>Pose <i style="background:#b3b9c4"></i>Dates Trello</span>
     <span id="info"></span>
   </div>
   <div id="chart"><p class="msg">Chargement…</p></div>
+  <div id="toast"></div>
   <script src="./gantt.js"></script>
 </body>
 </html>

@@ -159,3 +159,44 @@ body.erase .bar.edit::before, body.erase .bar.edit::after { cursor: pointer; }
 .congerow .track { background: rgba(243, 240, 255, .35); }
 .bar.cbar { color: #352c63; font-weight: 600; }
 .rowbtn.show { opacity: .8; }
+
+/* Options d'impression */
+.pr-presets { display: flex; gap: 4px; margin-top: 6px; }
+.pr-presets button { font-size: 11px !important; padding: 3px 7px !important; }
+.pr-paper { display: flex; flex-direction: column; gap: 3px; }
+.pr-paper label, .pr-opt { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.pr-note { margin: 6px 0 0; font-size: 11px; color: #626f86; }
+
+/* Page imprimée */
+body.print { display: block; height: auto; font-size: 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; background: #fff; }
+body.print .ptitle h1 { font-size: 15px; margin: 0 0 2px; }
+body.print .pmeta { color: #44546f; font-size: 10px; }
+body.print .plegend { display: flex; align-items: center; gap: 4px; margin: 4px 0 6px; color: #44546f; }
+body.print .plegend i { display: inline-block; width: 14px; height: 9px; border-radius: 2px; margin-left: 8px; border: 1px solid rgba(0,0,0,.1); }
+body.print .plegend i.hatch-f { background: repeating-linear-gradient(135deg, #c1c7d0 0 3px, #ebecf0 3px 6px); }
+body.print .plegend i.hatch-c { background: repeating-linear-gradient(135deg, #cfc5fa 0 3px, #f3f0ff 3px 6px); }
+body.print .ptable { border-collapse: collapse; }
+body.print .ptable td { padding: 0; }
+body.print .left { position: static; width: var(--lw); padding: 0 6px; font-size: 10px; }
+body.print .head { position: static; height: 48px; }
+body.print .head .track { height: 48px; }
+body.print .hcell.top { height: 16px; line-height: 16px; }
+body.print .hcell.mid { top: 16px; height: 16px; line-height: 16px; }
+body.print .hcell.bottom { top: 32px; height: 16px; line-height: 16px; font-size: 9px; }
+body.print .hcell { font-size: 9px; }
+body.print .row { height: 20px; break-inside: avoid; page-break-inside: avoid; }
+body.print .partrow { height: 16px; }
+body.print .bar { top: 3px; height: 14px; line-height: 14px; font-size: 9px; box-shadow: none; padding: 0 3px; }
+body.print .bar.upper { top: 2px; height: 7px; } body.print .bar.lower { top: 11px; height: 7px; }
+body.print .partrow .bar { top: 2px; height: 12px; line-height: 12px; }
+body.print .partrow .bar.upper { top: 1px; height: 6px; } body.print .partrow .bar.lower { top: 9px; height: 6px; }
+body.print .milestone { top: 4px; width: 11px; height: 11px; }
+body.print .summary { top: 8px; height: 4px; }
+body.print .track { overflow: hidden; }
+body.print .rowbtn, body.print .todayline { display: none; }
+body.print .cardrow:hover .left, body.print .cardrow:hover .track { background: none; }
+body.print .congerow .left { background: #f8f6ff; }
+body.print em.hint, body.print em.tag { font-size: 9px; }
+body.print .hcell.mid { text-align: center; padding-left: 0; }
+body.print .row.head { height: 48px; }
+body.print .overlay { overflow: hidden; }

@@ -180,6 +180,7 @@ function load() {
     return c || withTimeout(t.cards('id', 'name', 'idList', 'start', 'due', 'dueComplete', 'labels', 'closed'), 15000, null);
   });
   var getConges = withTimeout(t.get('board', 'shared', 'conges'), 6000, null);
+  try { withTimeout(t.board('name'), 5000, null).then(function (b) { if (b && b.name) state.boardName = b.name; }); } catch (e) { /* nom du tableau facultatif */ }
   return Promise.all([getCards, withTimeout(t.lists('id', 'name'), 15000, null), getConges]).then(function (res) {
     if (Array.isArray(res[2])) state.conges = res[2];
     if (seq !== loadSeq) return;
@@ -233,21 +234,26 @@ function barsHtml(bars, x, px, label, cardId, wOf, partId) {
   }).join('');
 }
 
-function render() {
+/* Dessine le planning. Sans argument : à l'écran. Avec po (impression) : renvoie le HTML pour la période po.from → po.to. */
+function render(po) {
   var chart = document.getElementById('chart');
-  var px = ZOOMS[state.zoom];
+  var z = po ? po.zoom : state.zoom, LW = po ? po.leftW : LEFT_W;
+  var px = po ? po.px : ZOOMS[z];
   var rows = state.cards.filter(function (r) {
-    return !(state.hideDone && r.done) && state.hiddenLists.indexOf(r.idList) < 0 && matches(r) && (state.showUndated || allBars(r, state.showParts).length);
+    return !(state.hideDone && r.done) && state.hiddenLists.indexOf(r.idList) < 0 && matches(r) &&
+      (po ? po.keep(r) : (state.showUndated || allBars(r, state.showParts).length));
   });
   var undated = state.cards.filter(function (r) { return !allBars(r, true).length; }).length;
   var planned = state.cards.length - undated;
 
-  document.querySelectorAll('[data-zoom]').forEach(function (b) {
-    b.classList.toggle('active', b.dataset.zoom === state.zoom);
+  if (!po) document.querySelectorAll('[data-zoom]').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.zoom === z);
   });
-  document.getElementById('info').textContent =
-    planned + ' carte(s) planifiée(s) · ' + undated + ' sans date' + (state.showUndated ? '' : ' (masquées)');
-  renderListMenu();
+  if (!po) {
+    document.getElementById('info').textContent =
+      planned + ' carte(s) planifiée(s) · ' + undated + ' sans date' + (state.showUndated ? '' : ' (masquées)');
+    renderListMenu();
+  }
 
   var emptyMsg = '';
   if (!rows.length) emptyMsg = state.search
@@ -262,9 +268,10 @@ function render() {
   state.conges.forEach(function (c) { var cs = iso(c.s), ce = iso(c.e); if (ce >= addDays(today, -60)) { if (cs < min) min = cs; if (ce > max) max = ce; } });
   // Frise en jours ouvrés uniquement (lundi → vendredi), qui commence un lundi
   min = monday(addDays(min, -3));
-  max = addDays(max, state.zoom === 'mois' ? 35 : 14);
-  var room = addDays(today, state.zoom === 'mois' ? 270 : state.zoom === 'semaine' ? 100 : 45); // place pour dessiner
+  max = addDays(max, z === 'mois' ? 35 : 14);
+  var room = addDays(today, z === 'mois' ? 270 : z === 'semaine' ? 100 : 45); // place pour dessiner
   if (max < room) max = room;
+  if (po) { min = day0(po.from); max = day0(po.to); }
   var work = [], pos = {}; // pos[clé jour] = nb de jours ouvrés avant ce jour
   for (var c = new Date(min), n = 0; c <= addDays(max, 1); c = addDays(c, 1)) {
     pos[key(c)] = n;
@@ -273,7 +280,7 @@ function render() {
   var W = work.length * px;
   var x = function (d) { var v = pos[key(d)]; return (v == null ? (d < min ? 0 : work.length) : v) * px; };
   var wOf = function (s, e) { return x(addDays(e, 1)) - x(s); };
-  state.geo = { work: work, px: px, x: x };
+  if (!po) state.geo = { work: work, px: px, x: x };
 
   // Fond : un trait fin par jour, un trait marqué par semaine, une semaine sur deux grisée, ligne du jour
   var bg = '';
@@ -284,7 +291,7 @@ function render() {
     if (fe) bg += '<div class="ferie" style="left:' + (i * px) + 'px;width:' + px + 'px" title="' + esc(fe) + '"></div>';
     else if (co) bg += '<div class="conge" style="left:' + (i * px) + 'px;width:' + px + 'px"></div>';
     if (isMon) bg += '<div class="tick week" style="left:' + (i * px) + 'px"></div>';
-    else if (state.zoom !== 'mois') bg += '<div class="tick" style="left:' + (i * px) + 'px"></div>';
+    else if (z !== 'mois') bg += '<div class="tick" style="left:' + (i * px) + 'px"></div>';
   });
   var tw = today.getDay();
   if (tw !== 0 && tw !== 6) bg += '<div class="todayline" style="left:' + (x(today) + px / 2) + 'px" title="Aujourd\'hui"></div>';
@@ -300,13 +307,13 @@ function render() {
   }
   work.forEach(function (d, i) {
     if (d.getDay() === 1) {
-      var lbl = state.zoom === 'mois' ? 'S' + isoWeek(d) : 'Semaine ' + isoWeek(d);
-      if (state.zoom === 'semaine') lbl = 'S' + isoWeek(d) + ' · ' + d.getDate() + '/' + (d.getMonth() + 1);
+      var lbl = z === 'mois' ? 'S' + isoWeek(d) : 'Semaine ' + isoWeek(d);
+      if (z === 'semaine') lbl = 'S' + isoWeek(d) + ' · ' + d.getDate() + '/' + (d.getMonth() + 1);
       mid += '<div class="hcell mid' + (isoWeek(d) % 2 === 0 ? ' alt' : '') + '" style="left:' + (i * px) + 'px;width:' + (5 * px) + 'px">' + lbl + '</div>';
     }
-    if (state.zoom !== 'mois') {
+    if (z !== 'mois') {
       var isToday = +d === +today;
-      var txt = state.zoom === 'jour' ? DAYS[d.getDay()] + ' ' + d.getDate() : d.getDate();
+      var txt = z === 'jour' ? DAYS[d.getDay()] + ' ' + d.getDate() : d.getDate();
       var fe = ferieOf(d), co = congeOf(d);
       bottom += '<div class="hcell bottom' + (isToday ? ' today' : '') + (d.getDay() === 1 ? ' mon' : '') + (fe ? ' ferie' : co ? ' conge' : '') +
         '" style="left:' + (i * px) + 'px;width:' + px + 'px"' + (fe || co ? ' title="' + esc(fe ? 'Férié : ' + fe : 'Congés : ' + co) + '"' : '') + '>' + txt + '</div>';
@@ -368,16 +375,18 @@ function render() {
     });
   });
 
+  if (po) return { W: W, bg: bg, head: top + mid + bottom, rows: html, count: rows.length };
+
   var scroll = chart.scrollLeft, scrollTop = chart.scrollTop, keep = chart.querySelector('.grid');
   chart.innerHTML =
-    '<div class="grid" style="width:' + (LEFT_W + W) + 'px">' +
-      '<div class="overlay" style="left:' + LEFT_W + 'px;width:' + W + 'px">' + bg + '</div>' +
+    '<div class="grid" style="width:' + (LW + W) + 'px">' +
+      '<div class="overlay" style="left:' + LW + 'px;width:' + W + 'px">' + bg + '</div>' +
       '<div class="row head"><div class="left"><div class="search"><input id="search" type="text" list="cardnames" autocomplete="off" placeholder="Rechercher un dossier…" value="' + esc(state.search) + '">' +
         (state.search ? '<button id="clearSearch" title="Effacer la recherche">✕</button>' : '') + '</div></div><div class="track" style="width:' + W + 'px">' + top + mid + bottom + '</div></div>' +
       html + (emptyMsg ? '<p class="msg">' + emptyMsg + '</p>' : '') +
     '</div>';
 
-  chart.dataset.todayX = LEFT_W + x(today);
+  chart.dataset.todayX = LW + x(today);
   if (keep && !state.rezoomed) { chart.scrollLeft = scroll; chart.scrollTop = scrollTop; } else scrollToToday();
   state.rezoomed = false;
 }
@@ -604,6 +613,14 @@ function popSave() {
 }
 document.getElementById('pop').addEventListener('click', function (e) {
   e.stopPropagation();
+  var pr = e.target.closest('[data-pr]');
+  if (pr) {
+    var fromEl = document.getElementById('prFrom'), base = fromEl.value ? iso(fromEl.value) : day0(new Date());
+    var end = new Date(base); end.setMonth(end.getMonth() + (+pr.dataset.pr)); end = addDays(end, -1);
+    document.getElementById('prTo').value = isoOf(end);
+    return;
+  }
+  if (e.target.id === 'prGo') { printGantt(); return; }
   if (e.target.id === 'popOk') { if (pop && pop.conge) congeSave(); else if (pop && pop.part) partSave(); else popSave(); }
   else if (e.target.id === 'popCancel') closePop();
   else if (e.target.id === 'popDel') { var o = pop; closePop(); if (o.conge) saveConge(o.idx, null, null); else savePeriod(o.cardId, o.partId, o.k, null); }
@@ -613,6 +630,88 @@ document.getElementById('pop').addEventListener('keydown', function (e) {
   if (e.key === 'Escape') { e.preventDefault(); closePop(); }
 });
 document.addEventListener('pointerdown', function (e) { if (pop && !e.target.closest('#pop')) closePop(); }, true);
+
+/* ---------- Impression ---------- */
+var PAPER = { a4l: { w: 277, h: 190, css: 'A4 landscape', label: 'A4 paysage' }, a3l: { w: 400, h: 277, css: 'A3 landscape', label: 'A3 paysage' }, a4p: { w: 190, h: 277, css: 'A4 portrait', label: 'A4 portrait' } };
+function openPrintPop() {
+  var today = day0(new Date());
+  var from = state.printFrom || isoOf(monday(addDays(today, -7))), to = state.printTo || isoOf(addDays(today, 90));
+  pop = { print: true };
+  var el = document.getElementById('pop');
+  el.innerHTML =
+    '<div class="pop-title">🖨 Imprimer le planning</div>' +
+    '<div class="pop-sub">Période</div>' +
+    '<div class="pop-range"><input type="date" id="prFrom" value="' + from + '"><span>→</span><input type="date" id="prTo" value="' + to + '"></div>' +
+    '<div class="pr-presets"><button data-pr="1">1 mois</button><button data-pr="3">3 mois</button><button data-pr="6">6 mois</button><button data-pr="12">12 mois</button></div>' +
+    '<div class="pop-sub">Papier</div>' +
+    '<div class="pr-paper">' + Object.keys(PAPER).map(function (k) {
+      return '<label><input type="radio" name="prPaper" value="' + k + '"' + ((state.printPaper || 'a4l') === k ? ' checked' : '') + '> ' + PAPER[k].label + '</label>';
+    }).join('') + '</div>' +
+    '<div class="pop-sub">Dossiers</div>' +
+    '<label class="pr-opt"><input type="checkbox" id="prOnly"' + (state.printOnly === false ? '' : ' checked') + '> Seulement ceux qui ont des dates sur la période</label>' +
+    '<p class="pr-note">Les filtres actuels s\'appliquent aussi (listes, recherche, cartes terminées, parties).</p>' +
+    '<div class="pop-btns"><button class="primary" id="prGo">Imprimer…</button><button id="popCancel">Annuler</button></div>';
+  el.className = 'open wide';
+  var b = document.getElementById('printBtn').getBoundingClientRect();
+  el.style.left = Math.max(8, Math.min(b.left, window.innerWidth - el.offsetWidth - 8)) + 'px';
+  el.style.top = (b.bottom + 6) + 'px';
+}
+function printGantt() {
+  var from = document.getElementById('prFrom').value, to = document.getElementById('prTo').value;
+  if (!from || !to) { (from ? document.getElementById('prTo') : document.getElementById('prFrom')).classList.add('err'); return; }
+  if (from > to) { var tmp = from; from = to; to = tmp; }
+  var paperKey = (document.querySelector('input[name=prPaper]:checked') || {}).value || 'a4l', paper = PAPER[paperKey];
+  var only = document.getElementById('prOnly').checked;
+  state.printFrom = from; state.printTo = to; state.printPaper = paperKey; state.printOnly = only;
+  closePop();
+
+  var f = iso(from), tt = iso(to), nWork = 0;
+  for (var d = new Date(f); d <= tt; d = addDays(d, 1)) if (d.getDay() !== 0 && d.getDay() !== 6) nWork++;
+  var leftW = paper.w < 250 ? 170 : 210;
+  var pageW = Math.floor(paper.w * 3.78) - 4;
+  var px = Math.max(1, Math.floor((pageW - leftW) / Math.max(1, nWork) * 100) / 100);
+  var zoom = px >= 30 ? 'jour' : px >= 17 ? 'semaine' : 'mois'; // en dessous de 17 px/jour : seulement les semaines
+  var keep = function (r) {
+    if (!only) return true;
+    return allBars(r, state.showParts).some(function (b) { return b.r.e >= f && b.r.s <= tt; });
+  };
+  var g = render({ from: f, to: tt, px: px, zoom: zoom, leftW: leftW, keep: keep });
+  if (!g.count) { toast('Aucun dossier avec des dates sur cette période.'); return; }
+
+  var base = new URL('./', window.location.href).href;
+  var boardName = state.boardName || 'Trello';
+  var now = new Date();
+  var doc = '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Planning ' + esc(boardName) + '</title>' +
+    '<link rel="stylesheet" href="' + base + 'gantt.css">' +
+    '<style>@page { size: ' + paper.css + '; margin: 10mm; }</style></head>' +
+    '<body class="print"><div class="ptitle"><h1>Planning étude / pose — ' + esc(boardName) + '</h1>' +
+    '<div class="pmeta">Du ' + fmt(f) + ' au ' + fmt(tt) + ' · ' + g.count + ' dossier(s) · imprimé le ' + fmt(now) + ' à ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) +
+    (state.search ? ' · recherche « ' + esc(state.search) + ' »' : '') + '</div>' +
+    '<div class="plegend"><i style="background:' + COLORS.e + '"></i>Étude <i style="background:' + COLORS.p + '"></i>Pose <i style="background:' + COLORS.trello + '"></i>Dates Trello ' +
+    '<i class="hatch-f"></i>Férié <i class="hatch-c"></i>Congés</div></div>' +
+    '<table class="ptable" style="width:' + (leftW + g.W) + 'px"><thead><tr><td>' +
+    '<div class="row head"><div class="left">Dossier</div><div class="track" style="width:' + g.W + 'px">' + g.head + '</div></div>' +
+    '</td></tr></thead><tbody><tr><td><div class="grid" style="width:' + (leftW + g.W) + 'px">' +
+    '<div class="overlay" style="left:' + leftW + 'px;width:' + g.W + 'px">' + g.bg + '</div>' + g.rows +
+    '</div></td></tr></tbody></table></body></html>';
+
+  // Impression via un cadre invisible : n'imprime que le planning
+  var old = document.getElementById('printFrame');
+  if (old) old.remove();
+  var fr = document.createElement('iframe');
+  fr.id = 'printFrame';
+  fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(fr);
+  fr.onload = function () {
+    setTimeout(function () {
+      try { fr.contentWindow.focus(); fr.contentWindow.print(); }
+      catch (err) { toast('Impression impossible : ' + (err && err.message || err)); }
+    }, 400);
+  };
+  fr.srcdoc = doc.replace('<body class="print">', '<body class="print" style="--lw:' + leftW + 'px">');
+  toast('Préparation de l\'impression…');
+}
+document.getElementById('printBtn').addEventListener('click', function (e) { e.stopPropagation(); openPrintPop(); });
 
 /* ---------- Choix des listes affichées ---------- */
 function renderListMenu() {

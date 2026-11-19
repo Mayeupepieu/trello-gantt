@@ -44,13 +44,46 @@ function matches(r) {
 function span(r) { return r ? { s: iso(r[0]), e: iso(r[1]) } : null; }
 
 /* Lit les données Étude / Pose enregistrées sur une carte */
-function planningOf(card) {
-  if (Array.isArray(card.pluginData) && card.pluginData.length) {
-    for (var i = 0; i < card.pluginData.length; i++) {
-      try { var v = JSON.parse(card.pluginData[i].value); if (v && v[KEY]) return Promise.resolve(v[KEY]); } catch (e) { /* ignore */ }
-    }
+/* Promesse qui ne peut pas bloquer : au-delà de ms, on continue avec la valeur de repli */
+function withTimeout(p, ms, fallback) {
+  return new Promise(function (resolve) {
+    var done = false;
+    var timer = setTimeout(function () { if (!done) { done = true; resolve(fallback); } }, ms);
+    Promise.resolve(p).then(function (v) { if (!done) { done = true; clearTimeout(timer); resolve(v); } },
+      function () { if (!done) { done = true; clearTimeout(timer); resolve(fallback); } });
+  });
+}
+/* Données Étude / Pose déjà fournies avec la carte (pluginData) : undefined si Trello ne les a pas fournies */
+function planningFromCard(card) {
+  if (!Array.isArray(card.pluginData)) return undefined;
+  var me = (t.getContext() || {}).plugin;
+  for (var i = 0; i < card.pluginData.length; i++) {
+    var pd = card.pluginData[i];
+    if (me && pd.idPlugin && pd.idPlugin !== me) continue;
+    try { var v = JSON.parse(pd.value); if (v && v[KEY]) return v[KEY]; } catch (e) { /* ignore */ }
   }
-  return t.get(card.id, 'shared', KEY).catch(function () { return null; });
+  return null;
+}
+/* Lit les données d'une carte via Trello (avec délai maximal) */
+function planningOf(card) {
+  return withTimeout(t.get(card.id, 'shared', KEY), 8000, null);
+}
+/* Exécute fn sur chaque élément, au plus `limit` à la fois */
+function mapLimit(items, limit, fn, onProgress) {
+  return new Promise(function (resolve) {
+    var out = new Array(items.length), next = 0, done = 0;
+    if (!items.length) return resolve(out);
+    function launch() {
+      if (next >= items.length) return;
+      var i = next++;
+      fn(items[i]).then(function (v) {
+        out[i] = v; done++;
+        if (onProgress) onProgress(done, items.length);
+        if (done === items.length) resolve(out); else launch();
+      });
+    }
+    for (var k = 0; k < Math.min(limit, items.length); k++) launch();
+  });
 }
 
 /* Transforme une carte en ligne(s) de Gantt */
@@ -100,23 +133,63 @@ function allBars(row, withParts) {
   return b;
 }
 
+/* Chargement : un seul à la fois ; si Trello en redemande pendant qu'il tourne, on relance juste après */
+var loadSeq = 0, loading = false, loadAgain = false, loaded = false, watchdog = null;
+function showLoading(msg) {
+  if (loaded) return; // on garde l'affichage existant pendant les rechargements
+  document.getElementById('chart').innerHTML = '<p class="msg">' + msg + '</p>';
+}
 function load() {
-  var getCards = t.cards('all').catch(function () {
-    return t.cards('id', 'name', 'idList', 'start', 'due', 'dueComplete', 'labels');
+  if (loading) { loadAgain = true; return; }
+  loading = true; loadAgain = false;
+  var seq = ++loadSeq;
+  showLoading('Chargement des cartes…');
+  clearTimeout(watchdog);
+  watchdog = setTimeout(function () { // sécurité : si rien n'a abouti en 25 s, on relance
+    if (seq !== loadSeq || !loading) return;
+    loading = false;
+    showLoading('Le chargement prend plus de temps que prévu… nouvelle tentative <button id="retry">Réessayer maintenant</button>');
+    load();
+  }, 25000);
+
+  var getCards = withTimeout(t.cards('all'), 15000, null).then(function (c) {
+    return c || withTimeout(t.cards('id', 'name', 'idList', 'start', 'due', 'dueComplete', 'labels', 'closed'), 15000, null);
   });
-  return Promise.all([getCards, t.lists('id', 'name')]).then(function (res) {
+  return Promise.all([getCards, withTimeout(t.lists('id', 'name'), 15000, null)]).then(function (res) {
+    if (seq !== loadSeq) return;
+    if (!res[0] || !res[1]) throw new Error('Trello n\'a pas répondu');
     var cards = res[0].filter(function (c) { return !c.closed; });
     state.lists = res[1];
-    return Promise.all(cards.map(planningOf)).then(function (plans) {
+    // 1) données fournies directement avec les cartes ; 2) sinon, lecture par paquets de 15
+    var known = cards.map(planningFromCard);
+    var missing = cards.filter(function (c, i) { return known[i] === undefined; });
+    return mapLimit(missing, 15, planningOf, function (n, total) {
+      if (seq === loadSeq) showLoading('Chargement des dates… ' + n + ' / ' + total);
+    }).then(function (fetched) {
+      if (seq !== loadSeq) return;
+      var byId = {};
+      missing.forEach(function (c, i) { byId[c.id] = fetched[i]; });
       state.plans = {};
-      state.cards = cards.map(function (c, i) { state.plans[c.id] = plans[i] || {}; var r = toRow(c, plans[i]); r.order = i; return r; });
+      state.cards = cards.map(function (c, i) {
+        var p = known[i] !== undefined ? known[i] : byId[c.id];
+        state.plans[c.id] = p || {};
+        var r = toRow(c, p); r.order = i; return r;
+      });
       document.getElementById('cardnames').innerHTML = state.cards.map(function (r) { return '<option value="' + esc(r.name) + '">'; }).join('');
+      loaded = true;
       render();
     });
   }).catch(function (err) {
-    document.getElementById('chart').innerHTML = '<p class="msg">Impossible de lire le tableau : ' + esc(err && err.message || err) + '</p>';
+    if (seq !== loadSeq) return;
+    showLoading('Impossible de lire le tableau : ' + esc(err && err.message || err) + ' <button id="retry">Réessayer</button>');
+  }).then(function () {
+    if (seq !== loadSeq) return;
+    clearTimeout(watchdog);
+    loading = false;
+    if (loadAgain) load();
   });
 }
+document.addEventListener('click', function (e) { if (e.target.id === 'retry') { loading = false; load(); } });
 
 /* Dessine les barres d'une ligne ; si Étude et Pose se chevauchent, elles partagent la hauteur */
 function barsHtml(bars, x, px, label, cardId, wOf, partId) {
@@ -612,7 +685,8 @@ function getRange(cardId, partId, k) {
 }
 
 // Se redessine automatiquement quand le tableau change
-t.get('member', 'private', 'ganttPrefs').catch(function () { return null; }).then(function (p) {
+// (les préférences ne doivent jamais bloquer l'ouverture : 3 s maximum)
+withTimeout(t.get('member', 'private', 'ganttPrefs'), 3000, null).then(function (p) {
   applyPrefs(p);
-  t.render(load);
+  t.render(function () { load(); });
 });

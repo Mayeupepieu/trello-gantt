@@ -242,11 +242,14 @@ function render() {
         var e = pb.reduce(function (m, z) { return z.r.e > m ? z.r.e : m; }, pb[0].r.e);
         extra = '<div class="summary" style="left:' + x(s) + 'px;width:' + Math.max(wOf(s, e), 6) + 'px" title="Ensemble des parties"></div>';
       }
-      html += '<div class="row cardrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(r.name) + '"><span>' + esc(r.name) + '</span>' + hint(r) + '</div>' +
+      html += '<div class="row cardrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(r.name) + '"><span>' + esc(r.name) + '</span>' + hint(r) +
+        '<button class="rowbtn" data-addpart="' + r.id + '" title="Ajouter une partie à ce dossier">＋</button></div>' +
         '<div class="track draw" data-row="' + r.id + '" data-part="" style="width:' + W + 'px">' + extra + barsHtml(b, x, px, r.name, r.id, wOf, '') + '</div></div>';
 
       if (state.showParts) r.parts.slice().sort(function (a, b) { var d = partKey(a) - partKey(b); return isNaN(d) ? 0 : d; }).forEach(function (p) {
-        html += '<div class="row partrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(p.name) + '"><span>↳ ' + esc(p.name) + '</span></div>' +
+        html += '<div class="row partrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(p.name) + '"><span>↳ ' + esc(p.name) + '</span>' +
+          '<button class="rowbtn" data-editpart="' + esc(p.pid) + '" data-row="' + r.id + '" title="Renommer / modifier les dates">✎</button>' +
+          '<button class="rowbtn del" data-delpart="' + esc(p.pid) + '" data-row="' + r.id + '" title="Supprimer cette partie">✕</button></div>' +
           '<div class="track draw" data-row="' + r.id + '" data-part="' + esc(p.pid) + '" style="width:' + W + 'px">' + barsHtml(p.bars, x, px, r.name + ' — ' + p.name, r.id, wOf, p.pid) + '</div></div>';
       });
     });
@@ -272,6 +275,14 @@ function scrollToToday() {
 }
 
 document.addEventListener('click', function (e) {
+  var rb = e.target.closest('.rowbtn');
+  if (rb) {
+    e.stopPropagation();
+    if (rb.dataset.addpart) openPartPop(e.clientX, e.clientY, rb.dataset.addpart, null);
+    else if (rb.dataset.editpart) openPartPop(e.clientX, e.clientY, rb.dataset.row, rb.dataset.editpart);
+    else if (rb.dataset.delpart) deletePart(rb.dataset.row, rb.dataset.delpart);
+    return;
+  }
   var el = e.target.closest('[data-card]');
   if (el) t.showCard(el.dataset.card);
   var tb = e.target.closest('button[data-tool]');
@@ -359,6 +370,62 @@ function openPop(cx, cy, o) {
   var f = document.getElementById(o.focus === 'e' ? 'popE' : 'popS');
   f.focus();
 }
+/* Ajouter / modifier une partie (nom + dates facultatives) */
+function openPartPop(cx, cy, cardId, pid) {
+  var row = state.cards.filter(function (r) { return r.id === cardId; })[0] || {};
+  var it = pid ? (((state.plans[cardId] || {}).items || {})[pid] || {}) : {};
+  var e = it.e || ['', ''], p = it.p || ['', ''];
+  pop = { part: true, cardId: cardId, pid: pid };
+  var el = document.getElementById('pop');
+  el.innerHTML =
+    '<div class="pop-title">' + esc(row.name || '') + '</div>' +
+    '<div class="pop-type">' + (pid ? 'Modifier la partie' : 'Nouvelle partie') + '</div>' +
+    '<label class="pop-f">Nom <input type="text" id="popName" value="' + esc(it.n || '') + '" placeholder="ex. Façade, Totem…"></label>' +
+    '<div class="pop-sub"><i class="e"></i>Étude <span>(facultatif)</span></div>' +
+    '<div class="pop-range"><input type="date" id="popES" value="' + e[0] + '"><span>→</span><input type="date" id="popEE" value="' + e[1] + '"></div>' +
+    '<div class="pop-sub"><i class="p"></i>Pose <span>(facultatif)</span></div>' +
+    '<div class="pop-range"><input type="date" id="popPS" value="' + p[0] + '"><span>→</span><input type="date" id="popPE" value="' + p[1] + '"></div>' +
+    '<div class="pop-btns"><button class="primary" id="popOk">' + (pid ? 'Enregistrer' : 'Ajouter') + '</button>' +
+    '<button id="popCancel">Annuler</button></div>';
+  el.className = 'open wide';
+  var w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.max(8, Math.min(cx, window.innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(cy, window.innerHeight - h - 8)) + 'px';
+  document.getElementById('popName').focus();
+}
+function rangeOf(a, b) {
+  if (!a && !b) return null;
+  a = a || b; b = b || a;
+  return a <= b ? [a, b] : [b, a];
+}
+function partSave() {
+  var name = document.getElementById('popName').value.trim();
+  if (!name) { document.getElementById('popName').focus(); document.getElementById('popName').classList.add('err'); return; }
+  var o = pop, before = state.plans[o.cardId] || {};
+  var plan = JSON.parse(JSON.stringify(before));
+  plan.items = plan.items || {};
+  var id = o.pid || 'm' + Date.now().toString(36);
+  var item = { n: name };
+  var e = rangeOf(document.getElementById('popES').value, document.getElementById('popEE').value);
+  var p = rangeOf(document.getElementById('popPS').value, document.getElementById('popPE').value);
+  if (e) item.e = e;
+  if (p) item.p = p;
+  plan.items[id] = item;
+  if (JSON.stringify(plan).length > MAX - 50) { toast('Trop de données pour cette carte (limite Trello).'); return; }
+  closePop();
+  state.showParts = true; document.getElementById('showParts').checked = true;
+  writePlan(o.cardId, plan).then(function (ok) { if (ok) toast(o.pid ? 'Partie modifiée' : 'Partie « ' + name + ' » ajoutée'); });
+}
+function deletePart(cardId, pid) {
+  var before = state.plans[cardId] || {};
+  var plan = JSON.parse(JSON.stringify(before));
+  var name = ((plan.items || {})[pid] || {}).n || 'Partie';
+  if (plan.items) delete plan.items[pid];
+  if (plan.items && !Object.keys(plan.items).length) delete plan.items;
+  writePlan(cardId, plan).then(function (ok) {
+    if (ok) toast('Partie « ' + name + ' » supprimée', function () { writePlan(cardId, before); });
+  });
+}
 function closePop() { pop = null; document.getElementById('pop').className = ''; }
 function popSave() {
   var s = document.getElementById('popS').value, en = document.getElementById('popE').value;
@@ -372,12 +439,12 @@ function popSave() {
 }
 document.getElementById('pop').addEventListener('click', function (e) {
   e.stopPropagation();
-  if (e.target.id === 'popOk') popSave();
+  if (e.target.id === 'popOk') { if (pop && pop.part) partSave(); else popSave(); }
   else if (e.target.id === 'popCancel') closePop();
   else if (e.target.id === 'popDel') { var o = pop; closePop(); savePeriod(o.cardId, o.partId, o.k, null); }
 });
 document.getElementById('pop').addEventListener('keydown', function (e) {
-  if (e.key === 'Enter') { e.preventDefault(); popSave(); }
+  if (e.key === 'Enter') { e.preventDefault(); if (pop && pop.part) partSave(); else popSave(); }
   if (e.key === 'Escape') { e.preventDefault(); closePop(); }
 });
 document.addEventListener('pointerdown', function (e) { if (pop && !e.target.closest('#pop')) closePop(); }, true);

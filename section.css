@@ -1,0 +1,14 @@
+* { box-sizing: border-box; }
+:root { --text: #172b4d; --muted: #626f86; --etude: #0055cc; --pose: #a54800; --etude-bg: #e9f2ff; --pose-bg: #fff4e5; --primary: #0c66e4; --on-primary: #fff; color-scheme: light; }
+html.dark { --text: #dee4ea; --muted: #9fadbc; --etude: #85b8ff; --pose: #fea362; --etude-bg: #1c2b41; --pose-bg: #3a2c1c; --primary: #579dff; --on-primary: #1d2125; color-scheme: dark; }
+html, body { margin: 0; background: transparent; }
+body { font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--text); }
+#content { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 4px 0 6px; }
+#summary { display: flex; gap: 6px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
+.muted { color: var(--muted); }
+.chip { padding: 3px 8px; border-radius: 4px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.chip.e { color: var(--etude); background: var(--etude-bg); }
+.chip.p { color: var(--pose); background: var(--pose-bg); }
+.chip.n { color: var(--muted); font-weight: 400; padding-left: 0; }
+button.primary { font: inherit; font-size: 13px; font-weight: 600; border: none; background: var(--primary); color: var(--on-primary); padding: 6px 12px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+button.primary:hover { filter: brightness(1.08); }

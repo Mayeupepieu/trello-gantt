@@ -36,6 +36,13 @@ window.TrelloPowerUp.initialize({
   'card-buttons': function () {
     return [{ icon: ICON, text: 'Planning étude / pose', callback: openEditor }];
   },
+  'card-back-section': function (t) {
+    return {
+      title: 'Planning étude / pose',
+      icon: ICON,
+      content: { type: 'iframe', url: t.signUrl('./section.html'), height: 52 }
+    };
+  },
   'card-badges': function (t) { return badges(t, false); },
   'card-detail-badges': function (t) { return badges(t, true); }
 });

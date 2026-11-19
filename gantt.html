@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Diagramme de Gantt</title>
+  <link rel="stylesheet" href="./gantt.css">
+  <script src="https://p.trellocdn.com/power-up.min.js"></script>
+</head>
+<body>
+  <div id="toolbar">
+    <div class="group" role="group" aria-label="Échelle">
+      <button data-zoom="jour">Jour</button>
+      <button data-zoom="semaine">Semaine</button>
+      <button data-zoom="mois">Mois</button>
+    </div>
+    <button id="today">Aujourd'hui</button>
+    <label>Trier par
+      <select id="sort">
+        <option value="pose">Date de pose</option>
+        <option value="etude">Date d'étude</option>
+        <option value="debut">Première date</option>
+        <option value="tableau">Ordre du tableau</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="group" checked> Regrouper par liste</label>
+    <label><input type="checkbox" id="showParts" checked> Afficher les parties</label>
+    <label><input type="checkbox" id="hideDone"> Masquer les cartes terminées</label>
+    <span class="legend"><i style="background:#579dff"></i>Étude <i style="background:#faa53d"></i>Pose <i style="background:#b3b9c4"></i>Dates Trello</span>
+    <span id="info"></span>
+  </div>
+  <div id="chart"><p class="msg">Chargement…</p></div>
+  <script src="./gantt.js"></script>
+</body>
+</html>

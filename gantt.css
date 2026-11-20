@@ -222,3 +222,11 @@ body.print .overlay { overflow: hidden; }
 .copt i.none { border: 2px dashed #b3b9c4; width: 10px; height: 10px; }
 body.print .cdot.none { display: none; }
 body.print .cdot { width: 9px; height: 9px; margin: 0 5px 0 0; }
+
+/* Dossier sélectionné (Gantt ouvert depuis une carte) */
+.cardrow.focus .left { background: #fff7d6; font-weight: 600; }
+.cardrow.focus .track { background: rgba(245, 205, 71, .16); }
+.cardrow.focus { outline: 2px solid #f5cd47; outline-offset: -2px; animation: focuspulse 1.2s ease-in-out 2; }
+@keyframes focuspulse { 50% { outline-color: #e2b203; outline-width: 3px; } }
+body.print .cardrow.focus .left, body.print .cardrow.focus .track { background: none; font-weight: 400; }
+body.print .cardrow.focus { outline: none; }

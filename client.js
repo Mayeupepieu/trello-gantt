@@ -27,6 +27,11 @@ function cleanPlan(p) {
 function fmt(iso) { var p = iso.split('-'); return p[2] + '/' + p[1]; }
 function range(r) { return r[0] === r[1] ? fmt(r[0]) : fmt(r[0]) + ' → ' + fmt(r[1]); }
 
+/* Ouvre le Gantt avec la carte courante sélectionnée */
+function openGanttFor(t) {
+  var id = (t.getContext() || {}).card;
+  return t.modal({ url: './gantt.html', title: 'Diagramme de Gantt', fullscreen: true, args: { focus: id } });
+}
 function openEditor(t) {
   return t.modal({ url: './planning.html', title: 'Planning étude / pose', height: 560 });
 }
@@ -71,7 +76,10 @@ window.TrelloPowerUp.initialize({
     }];
   },
   'card-buttons': function () {
-    return [{ icon: ICON, text: 'Planning étude / pose', callback: openEditor }];
+    return [
+      { icon: ICON, text: 'Planning étude / pose', callback: openEditor },
+      { icon: ICON, text: 'Voir dans le Gantt', callback: openGanttFor }
+    ];
   },
   'card-back-section': function (t) {
     return {

@@ -19,6 +19,9 @@ var CONGES = '__conges'; // ligne spéciale des congés / fermetures
 var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', hiddenLists: [], search: '', conges: [], lists: [], cards: [], plans: {}, geo: null };
 var PREFS = ['zoom', 'hideDone', 'showParts', 'showUndated', 'sort', 'group', 'tool', 'hiddenLists'];
 var MAX = 4096; // limite Trello de stockage par carte
+var FOCUS = null; // carte à sélectionner quand le Gantt est ouvert depuis une carte
+try { FOCUS = t.arg('focus') || null; } catch (e) { FOCUS = null; }
+var focusShown = false;
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -267,6 +270,7 @@ function load() {
       document.getElementById('cardnames').innerHTML = state.cards.map(function (r) { return '<option value="' + esc(r.name) + '">'; }).join('');
       loaded = true;
       render();
+      showFocus();
     });
   }).catch(function (err) {
     if (seq !== loadSeq) return;
@@ -302,6 +306,7 @@ function render(po) {
   var z = po ? po.zoom : state.zoom, LW = po ? po.leftW : LEFT_W;
   var px = po ? po.px : ZOOMS[z];
   var rows = state.cards.filter(function (r) {
+    if (!po && r.id === FOCUS) return true; // la carte sélectionnée reste toujours visible
     return !(state.hideDone && r.done) && state.hiddenLists.indexOf(r.idList) < 0 && matches(r) &&
       (po ? po.keep(r) : (state.showUndated || allBars(r, state.showParts).length));
   });
@@ -425,7 +430,7 @@ function render(po) {
         extra = '<div class="summary" style="left:' + x(s) + 'px;width:' + Math.max(wOf(s, e), 6) + 'px" title="Ensemble des parties"></div>';
       }
       var hx = colorHex(r.color);
-      html += '<div class="row cardrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(r.name) + '"' + (hx ? ' style="box-shadow: inset 4px 0 0 ' + hx + '"' : '') + '>' +
+      html += '<div class="row cardrow' + (r.done ? ' done' : '') + (!po && r.id === FOCUS ? ' focus' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(r.name) + '"' + (hx ? ' style="box-shadow: inset 4px 0 0 ' + hx + '"' : '') + '>' +
         '<button class="cdot' + (hx ? '' : ' none') + '" data-colorcard="' + r.id + '" title="Libellé de couleur' + (hx ? ' : ' + esc(colorName(r.color)) : '') + '"' + (hx ? ' style="background:' + hx + '"' : '') + '></button>' +
         '<span>' + esc(r.name) + '</span>' + hint(r) +
         '<button class="rowbtn" data-addpart="' + r.id + '" title="Ajouter une partie à ce dossier">＋</button></div>' +
@@ -456,6 +461,19 @@ function render(po) {
   state.rezoomed = false;
 }
 
+/* Fait défiler jusqu'à la carte sélectionnée (une seule fois, à l'ouverture) */
+function showFocus() {
+  if (!FOCUS || focusShown) return;
+  focusShown = true;
+  var row = document.querySelector('.cardrow.focus');
+  if (!row) return;
+  var chart = document.getElementById('chart');
+  chart.scrollTop = Math.max(0, row.offsetTop - 140);
+  var first = row.querySelector('.bar, .milestone, .summary');
+  if (first) chart.scrollLeft = Math.max(0, first.offsetLeft - 160);
+  var r = state.cards.filter(function (x) { return x.id === FOCUS; })[0];
+  if (r) toast('Dossier sélectionné : ' + r.name);
+}
 function scrollToToday() {
   var chart = document.getElementById('chart');
   chart.scrollLeft = Math.max(0, Number(chart.dataset.todayX || 0) - LEFT_W - 120);

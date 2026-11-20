@@ -33,6 +33,10 @@ function cleanPlan(p) {
 function fmt(iso) { var p = iso.split('-'); return p[2] + '/' + p[1] + '/' + p[0].slice(2); }
 function range(r) { return r[0] === r[1] ? fmt(r[0]) : fmt(r[0]) + ' → ' + fmt(r[1]); }
 
+document.getElementById('gantt').addEventListener('click', function () {
+  var id = (t.getContext() || {}).card;
+  t.modal({ url: './gantt.html', title: 'Diagramme de Gantt', fullscreen: true, args: { focus: id } });
+});
 document.getElementById('open').addEventListener('click', function () {
   t.modal({ url: './planning.html', title: 'Planning étude / pose', height: 560 });
 });

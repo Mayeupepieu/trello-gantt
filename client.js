@@ -36,11 +36,26 @@ function badges(t, detail) {
     var out = [];
     p = cleanPlan(p);
     if (!p) return out;
-    var nItems = Object.keys(p.items || {}).filter(function (k) { var i = p.items[k]; return i.e || i.p; }).length;
-    if (p.e) out.push({ text: (detail ? '' : 'Étude ') + range(p.e), color: 'blue', title: 'Étude' });
-    if (p.p) out.push({ text: (detail ? '' : 'Pose ') + range(p.p), color: 'orange', title: 'Pose' });
-    if (nItems) out.push({ text: nItems + ' partie(s) planifiée(s)', title: 'Parties' });
-    if (detail) out.forEach(function (b) { b.callback = openEditor; });
+    var parts = Object.keys(p.items || {}).map(function (k) { return p.items[k]; })
+      .filter(function (i) { return i.e || i.p; })
+      .sort(function (a, b) { var x = (a.e || a.p)[0], y = (b.e || b.p)[0]; return x < y ? -1 : x > y ? 1 : 0; });
+    if (detail) {
+      // Dos de la carte : badges colorés cliquables (inchangé)
+      if (p.e) out.push({ text: range(p.e), color: 'blue', title: 'Étude' });
+      if (p.p) out.push({ text: range(p.p), color: 'orange', title: 'Pose' });
+      if (parts.length) out.push({ text: parts.length + ' partie(s) planifiée(s)', title: 'Parties' });
+      out.forEach(function (b) { b.callback = openEditor; });
+      return out;
+    }
+    // Devant de la carte : texte simple, sans couleur, et une ligne par partie avec ses dates
+    if (p.e) out.push({ text: 'Étude ' + range(p.e) });
+    if (p.p) out.push({ text: 'Pose ' + range(p.p) });
+    parts.forEach(function (i) {
+      var d = [];
+      if (i.e) d.push('Étude ' + range(i.e));
+      if (i.p) d.push('Pose ' + range(i.p));
+      out.push({ text: '↳ ' + (i.n || 'Partie') + ' : ' + d.join(' · ') });
+    });
     return out;
   });
 }

@@ -68,6 +68,31 @@ function congeOf(d) {
 function span(r) { return r ? { s: iso(r[0]), e: iso(r[1]) } : null; }
 
 /* Lit les données Étude / Pose enregistrées sur une carte */
+function cleanConges(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter(function (c) { return c && isIso(c.s) && isIso(c.e); })
+    .map(function (c) { return { s: c.s, e: c.e, n: String(c.n == null ? '' : c.n).slice(0, 80) }; });
+}
+/* Sécurité : on n'accepte que des données au format attendu (dates AAAA-MM-JJ, textes courts) */
+function isIso(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function okRange(r) { return Array.isArray(r) && r.length === 2 && isIso(r[0]) && isIso(r[1]) ? [r[0], r[1]] : null; }
+function cleanPlan(p) {
+  if (!p || typeof p !== 'object') return null;
+  var out = {}, e = okRange(p.e), q = okRange(p.p);
+  if (e) out.e = e;
+  if (q) out.p = q;
+  if (p.items && typeof p.items === 'object') {
+    Object.keys(p.items).forEach(function (k) {
+      var it = p.items[k];
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(k) || !it || typeof it !== 'object') return;
+      var o = { n: String(it.n == null ? '' : it.n).slice(0, 120) }, ie = okRange(it.e), ip = okRange(it.p);
+      if (ie) o.e = ie;
+      if (ip) o.p = ip;
+      (out.items = out.items || {})[k] = o;
+    });
+  }
+  return out;
+}
 /* Promesse qui ne peut pas bloquer : au-delà de ms, on continue avec la valeur de repli */
 function withTimeout(p, ms, fallback) {
   return new Promise(function (resolve) {
@@ -84,13 +109,13 @@ function planningFromCard(card) {
   for (var i = 0; i < card.pluginData.length; i++) {
     var pd = card.pluginData[i];
     if (me && pd.idPlugin && pd.idPlugin !== me) continue;
-    try { var v = JSON.parse(pd.value); if (v && v[KEY]) return v[KEY]; } catch (e) { /* ignore */ }
+    try { var v = JSON.parse(pd.value); if (v && v[KEY]) return cleanPlan(v[KEY]); } catch (e) { /* ignore */ }
   }
   return null;
 }
 /* Lit les données d'une carte via Trello (avec délai maximal) */
 function planningOf(card) {
-  return withTimeout(t.get(card.id, 'shared', KEY), 8000, null);
+  return withTimeout(t.get(card.id, 'shared', KEY), 8000, null).then(cleanPlan);
 }
 /* Exécute fn sur chaque élément, au plus `limit` à la fois */
 function mapLimit(items, limit, fn, onProgress) {
@@ -157,6 +182,40 @@ function allBars(row, withParts) {
   return b;
 }
 
+/* Lecture des cartes : seulement les champs utiles (minimisation des données).
+   Si Trello ne fournit pas les données du Power-Up de cette façon, on revient à l'ancienne méthode,
+   et on mémorise le mode qui marche pour ne pas refaire le test à chaque ouverture. */
+var FIELDS = ['id', 'name', 'idList', 'start', 'due', 'dueComplete', 'closed'];
+function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+function hasPluginData(cards) { return Array.isArray(cards) && cards.length > 0 && cards.some(function (c) { return Array.isArray(c.pluginData); }); }
+function slim(cards) {
+  return cards && cards.map(function (c) {
+    var o = {};
+    FIELDS.forEach(function (f) { o[f] = c[f]; });
+    if (Array.isArray(c.pluginData)) o.pluginData = c.pluginData;
+    return o;
+  });
+}
+function askCards(fields) {
+  var p;
+  try { p = t.cards.apply(t, fields); } catch (e) { p = Promise.resolve(null); }
+  return withTimeout(p, 15000, null);
+}
+function fetchCards() {
+  var mode = lsGet('ganttCardsMode');
+  if (mode === 'none') return askCards(FIELDS).then(slim);
+  if (mode === 'all') return askCards(['all']).then(slim);
+  return askCards(FIELDS.concat('pluginData')).then(function (c) {
+    if (hasPluginData(c)) { lsSet('ganttCardsMode', 'explicit'); return slim(c); }
+    return askCards(['all']).then(function (a) {
+      if (hasPluginData(a)) { lsSet('ganttCardsMode', 'all'); return slim(a); }
+      if (a || c) lsSet('ganttCardsMode', 'none');
+      return slim(a || c);
+    });
+  });
+}
+
 /* Chargement : un seul à la fois ; si Trello en redemande pendant qu'il tourne, on relance juste après */
 var loadSeq = 0, loading = false, loadAgain = false, loaded = false, watchdog = null;
 function showLoading(msg) {
@@ -176,13 +235,11 @@ function load() {
     load();
   }, 25000);
 
-  var getCards = withTimeout(t.cards('all'), 15000, null).then(function (c) {
-    return c || withTimeout(t.cards('id', 'name', 'idList', 'start', 'due', 'dueComplete', 'labels', 'closed'), 15000, null);
-  });
+  var getCards = fetchCards();
   var getConges = withTimeout(t.get('board', 'shared', 'conges'), 6000, null);
   try { withTimeout(t.board('name'), 5000, null).then(function (b) { if (b && b.name) state.boardName = b.name; }); } catch (e) { /* nom du tableau facultatif */ }
   return Promise.all([getCards, withTimeout(t.lists('id', 'name'), 15000, null), getConges]).then(function (res) {
-    if (Array.isArray(res[2])) state.conges = res[2];
+    if (Array.isArray(res[2])) state.conges = cleanConges(res[2]);
     if (seq !== loadSeq) return;
     if (!res[0] || !res[1]) throw new Error('Trello n\'a pas répondu');
     var cards = res[0].filter(function (c) { return !c.closed; });

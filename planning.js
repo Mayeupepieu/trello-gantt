@@ -3,6 +3,27 @@ var t = window.TrelloPowerUp.iframe();
 var KEY = 'planning';
 var MAX = 4096; // limite Trello de stockage par carte
 
+/* Sécurité : on n'accepte que des données au format attendu (dates AAAA-MM-JJ, textes courts) */
+function isIso(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function okRange(r) { return Array.isArray(r) && r.length === 2 && isIso(r[0]) && isIso(r[1]) ? [r[0], r[1]] : null; }
+function cleanPlan(p) {
+  if (!p || typeof p !== 'object') return null;
+  var out = {}, e = okRange(p.e), q = okRange(p.p);
+  if (e) out.e = e;
+  if (q) out.p = q;
+  if (p.items && typeof p.items === 'object') {
+    Object.keys(p.items).forEach(function (k) {
+      var it = p.items[k];
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(k) || !it || typeof it !== 'object') return;
+      var o = { n: String(it.n == null ? '' : it.n).slice(0, 120) }, ie = okRange(it.e), ip = okRange(it.p);
+      if (ie) o.e = ie;
+      if (ip) o.p = ip;
+      (out.items = out.items || {})[k] = o;
+    });
+  }
+  return out;
+}
+
 /* Thème clair / sombre : suit celui de Trello */
 function applyTheme() {
   var th = null;
@@ -149,7 +170,7 @@ Promise.all([
 ]).then(function (res) {
   state.card = res[0];
   state.checklists = res[1];
-  var saved = res[2] || {};
+  var saved = cleanPlan(res[2]) || {};
   state.data = { e: saved.e || null, p: saved.p || null, items: saved.items || {} };
   render();
 }).catch(function (err) {

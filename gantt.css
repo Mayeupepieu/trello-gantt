@@ -116,7 +116,7 @@ body.erase .bar.edit::before, body.erase .bar.edit::after { cursor: pointer; }
 #clearSearch:hover { color: #c9372c; }
 
 /* Fenêtre de saisie (clic droit) */
-#pop { display: none; position: fixed; z-index: 30; background: #fff; border: 1px solid #c1c7d0; border-radius: 8px; box-shadow: 0 10px 28px rgba(9,30,66,.28); padding: 12px; width: 250px; }
+#pop { display: none; position: fixed; z-index: 30; background: #fff; border: 1px solid #c1c7d0; border-radius: 8px; box-shadow: 0 10px 28px rgba(9,30,66,.28); padding: 12px; width: 275px; }
 #pop.open { display: block; }
 .pop-title { font-weight: 600; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pop-title span { font-weight: 400; color: #626f86; }
@@ -200,3 +200,25 @@ body.print em.hint, body.print em.tag { font-size: 9px; }
 body.print .hcell.mid { text-align: center; padding-left: 0; }
 body.print .row.head { height: 48px; }
 body.print .overlay { overflow: hidden; }
+
+/* Durée (jours ouvrés) dans les fenêtres de saisie */
+.pop-n { display: flex; align-items: center; gap: 4px; color: #626f86; font-size: 12px; }
+#popN { font: inherit; width: 64px; padding: 4px 6px; border: 1px solid #8590a2; border-radius: 4px; }
+.pop-range input[type=number] { width: 52px; font: inherit; font-size: 12px; padding: 4px; border: 1px solid #8590a2; border-radius: 4px; }
+.pop-range input[type=date] { width: 118px; }
+#pop.wide { width: 340px; }
+.pop-hint { font-size: 11px; color: #8590a2; margin: 2px 0 4px; }
+
+/* Libellé de couleur des dossiers */
+.cdot { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 2px solid transparent; margin: 0 7px 0 -10px; padding: 0; cursor: pointer; background: none; }
+.cdot.none { border: 2px dashed #b3b9c4; opacity: .35; }
+.cardrow:hover .cdot.none { opacity: 1; }
+.cdot:hover { transform: scale(1.2); }
+.cmenu { display: flex; flex-direction: column; gap: 2px; min-width: 170px; }
+.copt { display: flex; align-items: center; gap: 8px; text-align: left; border: none !important; background: none !important; padding: 5px 6px !important; border-radius: 4px; font-size: 13px !important; }
+.copt:hover { background: #f1f2f4 !important; }
+.copt.sel { font-weight: 600; }
+.copt i { display: inline-block; width: 14px; height: 14px; border-radius: 50%; }
+.copt i.none { border: 2px dashed #b3b9c4; width: 10px; height: 10px; }
+body.print .cdot.none { display: none; }
+body.print .cdot { width: 9px; height: 9px; margin: 0 5px 0 0; }

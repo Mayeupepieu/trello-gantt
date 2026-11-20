@@ -17,6 +17,7 @@ function cleanPlan(p) {
   var out = {}, e = okRange(p.e), q = okRange(p.p);
   if (e) out.e = e;
   if (q) out.p = q;
+  if (typeof p.c === 'string' && /^(red|orange|yellow|green|blue|purple|pink|gray)$/.test(p.c)) out.c = p.c;
   if (p.items && typeof p.items === 'object') {
     Object.keys(p.items).forEach(function (k) {
       var it = p.items[k];

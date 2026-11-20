@@ -11,6 +11,7 @@ function cleanPlan(p) {
   var out = {}, e = okRange(p.e), q = okRange(p.p);
   if (e) out.e = e;
   if (q) out.p = q;
+  if (typeof p.c === 'string' && /^(red|orange|yellow|green|blue|purple|pink|gray)$/.test(p.c)) out.c = p.c;
   if (p.items && typeof p.items === 'object') {
     Object.keys(p.items).forEach(function (k) {
       var it = p.items[k];
@@ -43,7 +44,14 @@ function esc(s) {
   });
 }
 
-/* Une ligne : nom + Étude (début/fin) + Pose (début/fin) */
+/* Cellule de dates : début → fin, et nombre de jours ouvrés (le 3e champ est calculé à partir des 2 autres) */
+function dateCell(k, r, label) {
+  return '<div class="dr"><input type="date" data-f="' + k + '0" value="' + r[0] + '" title="Début"><span class="sep">→</span>' +
+    '<input type="date" data-f="' + k + '1" value="' + r[1] + '" title="Fin"></div>' +
+    '<div class="dd"><input type="number" data-f="' + k + 'n" min="1" max="999" placeholder="—" title="Nombre de jours ouvrés"> <span>j ouvrés</span>' +
+    '<button class="clr" data-clr="' + k + '" title="Effacer les dates ' + label + '">✕ effacer</button></div>';
+}
+/* Une ligne : nom + Étude (début/fin/durée) + Pose (début/fin/durée) */
 function rowHtml(id, name, rec, opts) {
   rec = rec || {};
   var e = rec.e || ['', ''], p = rec.p || ['', ''];
@@ -52,13 +60,11 @@ function rowHtml(id, name, rec, opts) {
     : esc(name);
   return '<tr class="' + (opts.main ? 'main' : '') + '" data-id="' + id + '">' +
     '<td class="name' + (opts.done ? ' done' : '') + '">' + nameCell + '</td>' +
-    '<td class="etude"><input type="date" data-f="e0" value="' + e[0] + '"><span class="sep">→</span><input type="date" data-f="e1" value="' + e[1] + '">' +
-      '<button class="clr" data-clr="e" title="Effacer les dates d\'étude">✕</button></td>' +
-    '<td class="pose"><input type="date" data-f="p0" value="' + p[0] + '"><span class="sep">→</span><input type="date" data-f="p1" value="' + p[1] + '">' +
-      '<button class="clr" data-clr="p" title="Effacer les dates de pose">✕</button></td>' +
+    '<td class="etude">' + dateCell('e', e, 'd\'étude') + '</td>' +
+    '<td class="pose">' + dateCell('p', p, 'de pose') + '</td>' +
     '<td>' + (opts.deletable ? '<button class="del" data-del="' + id + '" title="Supprimer">✕</button>' : '') + '</td></tr>';
 }
-var HEAD = '<tr><th></th><th class="etude">Étude (début → fin)</th><th class="pose">Pose (début → fin)</th><th></th></tr>';
+var HEAD = '<tr><th></th><th class="etude">Étude (début → fin · durée)</th><th class="pose">Pose (début → fin · durée)</th><th></th></tr>';
 
 function render() {
   var d = state.data, html = '';
@@ -91,7 +97,14 @@ function render() {
   html += '<button class="link" id="add">+ Ajouter une partie</button>';
 
   document.getElementById('app').innerHTML = html +
-    '<div id="footer"><button class="primary" id="save">Enregistrer</button><button id="cancel">Annuler</button><span id="status"></span></div>';
+    '<div id="footer"><button class="primary" id="save">Enregistrer</button><button id="cancel">Annuler</button>' +
+    '<span class="hint">Remplissez 2 champs sur 3 : le 3e est calculé (jours ouvrés, hors week-ends et fériés).</span><span id="status"></span></div>';
+  document.querySelectorAll('tr[data-id]').forEach(function (tr) {
+    ['e', 'p'].forEach(function (k) {
+      var q = function (f) { return tr.querySelector('[data-f="' + k + f + '"]'); };
+      window.GD.wire(q('0'), q('1'), q('n'));
+    });
+  });
 }
 
 /* Relit le formulaire dans state.data */
@@ -122,6 +135,7 @@ function save() {
   var d = state.data, out = { items: {} };
   if (d.e) out.e = d.e;
   if (d.p) out.p = d.p;
+  if (d.c) out.c = d.c; // libellé de couleur (choisi dans le Gantt) conservé
   Object.keys(d.items).forEach(function (k) {
     var it = d.items[k];
     // on garde les parties datées, et les parties manuelles même sans date
@@ -135,7 +149,7 @@ function save() {
     return;
   }
   st.className = ''; st.textContent = 'Enregistrement…';
-  var empty = !out.e && !out.p && !Object.keys(out.items).length;
+  var empty = !out.e && !out.p && !out.c && !Object.keys(out.items).length;
   (empty ? t.remove('card', 'shared', KEY) : t.set('card', 'shared', KEY, out))
     .then(function () { return t.closeModal(); })
     .catch(function (err) { st.className = 'err'; st.textContent = 'Erreur : ' + (err && err.message || err); });
@@ -147,6 +161,7 @@ document.addEventListener('click', function (ev) {
     var tr = el.closest('tr');
     tr.querySelector('[data-f="' + el.dataset.clr + '0"]').value = '';
     tr.querySelector('[data-f="' + el.dataset.clr + '1"]').value = '';
+    tr.querySelector('[data-f="' + el.dataset.clr + 'n"]').value = '';
   }
   else if (el.id === 'save') save();
   else if (el.id === 'cancel') t.closeModal();
@@ -171,7 +186,7 @@ Promise.all([
   state.card = res[0];
   state.checklists = res[1];
   var saved = cleanPlan(res[2]) || {};
-  state.data = { e: saved.e || null, p: saved.p || null, items: saved.items || {} };
+  state.data = { e: saved.e || null, p: saved.p || null, c: saved.c || null, items: saved.items || {} };
   render();
 }).catch(function (err) {
   document.getElementById('app').innerHTML = '<p class="muted">Erreur de chargement : ' + esc(err && err.message || err) + '</p>';

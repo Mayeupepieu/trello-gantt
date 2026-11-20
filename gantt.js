@@ -10,6 +10,10 @@ var MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août'
 var COLORS = { e: '#579dff', p: '#faa53d', trello: '#b3b9c4', c: '#b8acf6' };
 var NAMES = { e: 'Étude', p: 'Pose', trello: 'Dates Trello', c: 'Congés' };
 var NAMES_DEL = { e: 'Étude supprimée', p: 'Pose supprimée', c: 'Congé supprimé' };
+var CARD_COLORS = [['', 'Aucune couleur', ''], ['red', 'Rouge', '#e2483d'], ['orange', 'Orange', '#fea362'], ['yellow', 'Jaune', '#f5cd47'],
+  ['green', 'Vert', '#4bce97'], ['blue', 'Bleu', '#579dff'], ['purple', 'Violet', '#9f8fef'], ['pink', 'Rose', '#e774bb'], ['gray', 'Gris', '#8590a2']];
+function colorName(c) { for (var i = 0; i < CARD_COLORS.length; i++) if (CARD_COLORS[i][0] === c) return CARD_COLORS[i][1]; return ''; }
+function colorHex(c) { for (var i = 0; i < CARD_COLORS.length; i++) if (CARD_COLORS[i][0] === c) return CARD_COLORS[i][2]; return ''; }
 var CONGES = '__conges'; // ligne spéciale des congés / fermetures
 
 var state = { zoom: 'semaine', hideDone: false, showParts: true, showUndated: true, sort: 'pose', group: true, tool: 'e', hiddenLists: [], search: '', conges: [], lists: [], cards: [], plans: {}, geo: null };
@@ -81,6 +85,7 @@ function cleanPlan(p) {
   var out = {}, e = okRange(p.e), q = okRange(p.p);
   if (e) out.e = e;
   if (q) out.p = q;
+  if (typeof p.c === 'string' && /^(red|orange|yellow|green|blue|purple|pink|gray)$/.test(p.c)) out.c = p.c;
   if (p.items && typeof p.items === 'object') {
     Object.keys(p.items).forEach(function (k) {
       var it = p.items[k];
@@ -138,7 +143,7 @@ function mapLimit(items, limit, fn, onProgress) {
 /* Transforme une carte en ligne(s) de Gantt */
 function toRow(c, p) {
   p = p || {};
-  var row = { id: c.id, name: c.name, idList: c.idList, done: !!c.dueComplete, bars: [], parts: [], card: c };
+  var row = { id: c.id, name: c.name, idList: c.idList, done: !!c.dueComplete, bars: [], parts: [], card: c, color: p.c || '' };
   if (p.e) row.bars.push({ k: 'e', r: span(p.e) });
   if (p.p) row.bars.push({ k: 'p', r: span(p.p) });
   if (!row.bars.length && (c.start || c.due)) {
@@ -279,7 +284,7 @@ document.addEventListener('click', function (e) { if (e.target.id === 'retry') {
 function barsHtml(bars, x, px, label, cardId, wOf, partId) {
   var overlap = bars.length === 2 && bars[0].r.s <= bars[1].r.e && bars[1].r.s <= bars[0].r.e;
   return bars.map(function (b, i) {
-    var dur = Math.round(wOf(b.r.s, b.r.e) / px);
+    var dur = window.GD.count(isoOf(b.r.s), isoOf(b.r.e));
     var tip = label + '\n' + NAMES[b.k] + ' : ' + (+b.r.s === +b.r.e ? 'le ' + fmt(b.r.s) : fmt(b.r.s) + ' → ' + fmt(b.r.e) + ' (' + dur + ' j ouvré' + (dur > 1 ? 's' : '') + ')');
     if (b.milestone)
       return '<div class="milestone" style="left:' + (x(b.r.s) + px / 2 - 8) + 'px;background:' + COLORS[b.k] + '" title="' + esc(tip) + '"></div>';
@@ -379,7 +384,7 @@ function render(po) {
 
   // Ligne des congés / fermetures (commune à tout le tableau)
   var cbars = state.conges.map(function (c, i) {
-    var r = { s: iso(c.s), e: iso(c.e) }, w = Math.max(wOf(r.s, r.e), 6), dur = Math.round(wOf(r.s, r.e) / px);
+    var r = { s: iso(c.s), e: iso(c.e) }, w = Math.max(wOf(r.s, r.e), 6), dur = window.GD.count(c.s, c.e);
     var tip = (c.n || 'Congés') + '\n' + (c.s === c.e ? 'le ' + fmt(r.s) : fmt(r.s) + ' → ' + fmt(r.e) + ' (' + dur + ' j ouvré' + (dur > 1 ? 's' : '') + ')') +
       '\nGlisser pour déplacer · bords pour étirer · clic droit pour modifier · double-clic pour supprimer';
     return '<div class="bar edit cbar" data-k="c" data-part="' + i + '" style="left:' + x(r.s) + 'px;width:' + w + 'px;background:' + COLORS.c + '" title="' + esc(tip) + '">' + (w > 50 ? esc(c.n || 'Congés') : '') + '</div>';
@@ -419,7 +424,10 @@ function render(po) {
         var e = pb.reduce(function (m, z) { return z.r.e > m ? z.r.e : m; }, pb[0].r.e);
         extra = '<div class="summary" style="left:' + x(s) + 'px;width:' + Math.max(wOf(s, e), 6) + 'px" title="Ensemble des parties"></div>';
       }
-      html += '<div class="row cardrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(r.name) + '"><span>' + esc(r.name) + '</span>' + hint(r) +
+      var hx = colorHex(r.color);
+      html += '<div class="row cardrow' + (r.done ? ' done' : '') + '"><div class="left" data-card="' + r.id + '" title="' + esc(r.name) + '"' + (hx ? ' style="box-shadow: inset 4px 0 0 ' + hx + '"' : '') + '>' +
+        '<button class="cdot' + (hx ? '' : ' none') + '" data-colorcard="' + r.id + '" title="Libellé de couleur' + (hx ? ' : ' + esc(colorName(r.color)) : '') + '"' + (hx ? ' style="background:' + hx + '"' : '') + '></button>' +
+        '<span>' + esc(r.name) + '</span>' + hint(r) +
         '<button class="rowbtn" data-addpart="' + r.id + '" title="Ajouter une partie à ce dossier">＋</button></div>' +
         '<div class="track draw" data-row="' + r.id + '" data-part="" style="width:' + W + 'px">' + extra + barsHtml(b, x, px, r.name, r.id, wOf, '') + '</div></div>';
 
@@ -454,6 +462,8 @@ function scrollToToday() {
 }
 
 document.addEventListener('click', function (e) {
+  var cd = e.target.closest('.cdot');
+  if (cd) { e.stopPropagation(); openColorMenu(cd, cd.dataset.colorcard); return; }
   var rb = e.target.closest('.rowbtn');
   if (rb) {
     e.stopPropagation();
@@ -545,6 +555,8 @@ function openPop(cx, cy, o) {
       : '<div class="pop-type"><i class="' + o.k + '"></i>' + NAMES[o.k] + '</div>') +
     '<label class="pop-f">Début <input type="date" id="popS" value="' + o.r[0] + '"></label>' +
     '<label class="pop-f">Fin <input type="date" id="popE" value="' + o.r[1] + '"></label>' +
+    '<label class="pop-f">Durée <span class="pop-n"><input type="number" id="popN" min="1" max="999" placeholder="—"> j ouvrés</span></label>' +
+    '<div class="pop-hint">2 champs sur 3 suffisent : le 3e est calculé.</div>' +
     '<div class="pop-btns"><button class="primary" id="popOk">Enregistrer</button>' +
     (o.isNew ? '' : '<button class="danger" id="popDel">Supprimer</button>') +
     '<button id="popCancel">Annuler</button></div>';
@@ -552,6 +564,7 @@ function openPop(cx, cy, o) {
   var w = el.offsetWidth, h = el.offsetHeight;
   el.style.left = Math.max(8, Math.min(cx, window.innerWidth - w - 8)) + 'px';
   el.style.top = Math.max(8, Math.min(cy, window.innerHeight - h - 8)) + 'px';
+  window.GD.wire(document.getElementById('popS'), document.getElementById('popE'), document.getElementById('popN'));
   var f = document.getElementById(o.focus === 'e' ? 'popE' : 'popS');
   f.focus();
 }
@@ -584,6 +597,7 @@ function openCongePop(cx, cy, idx, dateIso) {
     '<label class="pop-f">Libellé <input type="text" id="popName" value="' + esc(c.n || '') + '" placeholder="ex. Fermeture été (facultatif)"></label>' +
     '<label class="pop-f">Début <input type="date" id="popS" value="' + (c.s || '') + '"></label>' +
     '<label class="pop-f">Fin <input type="date" id="popE" value="' + (c.e || '') + '"></label>' +
+    '<label class="pop-f">Durée <span class="pop-n"><input type="number" id="popN" min="1" max="999" placeholder="—"> j ouvrés</span></label>' +
     '<div class="pop-btns"><button class="primary" id="popOk">' + (idx >= 0 ? 'Enregistrer' : 'Ajouter') + '</button>' +
     (idx >= 0 ? '<button class="danger" id="popDel">Supprimer</button>' : '') +
     '<button id="popCancel">Annuler</button></div>';
@@ -591,6 +605,7 @@ function openCongePop(cx, cy, idx, dateIso) {
   var w = el.offsetWidth, h = el.offsetHeight;
   el.style.left = Math.max(8, Math.min(cx, window.innerWidth - w - 8)) + 'px';
   el.style.top = Math.max(8, Math.min(cy, window.innerHeight - h - 8)) + 'px';
+  window.GD.wire(document.getElementById('popS'), document.getElementById('popE'), document.getElementById('popN'));
   document.getElementById(idx >= 0 ? 'popS' : 'popName').focus();
 }
 function congeSave() {
@@ -599,6 +614,27 @@ function congeSave() {
   var o = pop, name = document.getElementById('popName').value.trim();
   closePop();
   saveConge(o.idx, r, name);
+}
+
+/* ---------- Libellé de couleur d'un dossier ---------- */
+function openColorMenu(btn, cardId) {
+  var cur = (state.plans[cardId] || {}).c || '';
+  pop = { color: true, cardId: cardId };
+  var el = document.getElementById('pop');
+  el.innerHTML = '<div class="pop-title">Libellé de couleur</div><div class="cmenu">' + CARD_COLORS.map(function (c) {
+    return '<button class="copt' + (c[0] === cur ? ' sel' : '') + '" data-setcolor="' + c[0] + '">' +
+      '<i' + (c[2] ? ' style="background:' + c[2] + '"' : ' class="none"') + '></i>' + c[1] + (c[0] === cur ? ' ✓' : '') + '</button>';
+  }).join('') + '</div>';
+  el.className = 'open';
+  var b = btn.getBoundingClientRect();
+  el.style.left = Math.max(8, Math.min(b.left, window.innerWidth - el.offsetWidth - 8)) + 'px';
+  el.style.top = Math.max(8, Math.min(b.bottom + 4, window.innerHeight - el.offsetHeight - 8)) + 'px';
+}
+function setColor(cardId, c) {
+  var plan = JSON.parse(JSON.stringify(state.plans[cardId] || {}));
+  if (c) plan.c = c; else delete plan.c;
+  closePop();
+  writePlan(cardId, plan);
 }
 
 /* Ajouter / modifier une partie (nom + dates facultatives) */
@@ -613,15 +649,18 @@ function openPartPop(cx, cy, cardId, pid) {
     '<div class="pop-type">' + (pid ? 'Modifier la partie' : 'Nouvelle partie') + '</div>' +
     '<label class="pop-f">Nom <input type="text" id="popName" value="' + esc(it.n || '') + '" placeholder="ex. Façade, Totem…"></label>' +
     '<div class="pop-sub"><i class="e"></i>Étude <span>(facultatif)</span></div>' +
-    '<div class="pop-range"><input type="date" id="popES" value="' + e[0] + '"><span>→</span><input type="date" id="popEE" value="' + e[1] + '"></div>' +
+    '<div class="pop-range"><input type="date" id="popES" value="' + e[0] + '"><span>→</span><input type="date" id="popEE" value="' + e[1] + '"><input type="number" id="popEN" min="1" max="999" placeholder="j" title="Jours ouvrés"></div>' +
     '<div class="pop-sub"><i class="p"></i>Pose <span>(facultatif)</span></div>' +
-    '<div class="pop-range"><input type="date" id="popPS" value="' + p[0] + '"><span>→</span><input type="date" id="popPE" value="' + p[1] + '"></div>' +
+    '<div class="pop-range"><input type="date" id="popPS" value="' + p[0] + '"><span>→</span><input type="date" id="popPE" value="' + p[1] + '"><input type="number" id="popPN" min="1" max="999" placeholder="j" title="Jours ouvrés"></div>' +
+    '<div class="pop-hint">Début, fin, nombre de jours ouvrés (j) : 2 champs sur 3 suffisent.</div>' +
     '<div class="pop-btns"><button class="primary" id="popOk">' + (pid ? 'Enregistrer' : 'Ajouter') + '</button>' +
     '<button id="popCancel">Annuler</button></div>';
   el.className = 'open wide';
   var w = el.offsetWidth, h = el.offsetHeight;
   el.style.left = Math.max(8, Math.min(cx, window.innerWidth - w - 8)) + 'px';
   el.style.top = Math.max(8, Math.min(cy, window.innerHeight - h - 8)) + 'px';
+  window.GD.wire(document.getElementById('popES'), document.getElementById('popEE'), document.getElementById('popEN'));
+  window.GD.wire(document.getElementById('popPS'), document.getElementById('popPE'), document.getElementById('popPN'));
   document.getElementById('popName').focus();
 }
 function rangeOf(a, b) {
@@ -670,6 +709,8 @@ function popSave() {
 }
 document.getElementById('pop').addEventListener('click', function (e) {
   e.stopPropagation();
+  var sc = e.target.closest('[data-setcolor]');
+  if (sc && pop && pop.color) { setColor(pop.cardId, sc.dataset.setcolor); return; }
   var pr = e.target.closest('[data-pr]');
   if (pr) {
     var fromEl = document.getElementById('prFrom'), base = fromEl.value ? iso(fromEl.value) : day0(new Date());
@@ -842,7 +883,7 @@ function savePeriod(cardId, partId, k, range) {
 function writePlan(cardId, plan) {
   var prev = state.plans[cardId];
   applyPlan(cardId, plan);
-  var empty = !plan.e && !plan.p && !(plan.items && Object.keys(plan.items).length);
+  var empty = !plan.e && !plan.p && !plan.c && !(plan.items && Object.keys(plan.items).length);
   return (empty ? t.remove(cardId, 'shared', KEY) : t.set(cardId, 'shared', KEY, plan))
     .then(function () { return true; })
     .catch(function (err) {
@@ -910,7 +951,7 @@ document.addEventListener('pointermove', function (e) {
   drag.ns = s; drag.ne = en;
   drag.ghost.style.left = (s * g.px) + 'px';
   drag.ghost.style.width = ((en - s + 1) * g.px) + 'px';
-  drag.ghost.textContent = NAMES[drag.k] + ' · ' + short(g.work[s]) + (en > s ? ' → ' + short(g.work[en]) : '') + ' (' + (en - s + 1) + ' j)';
+  drag.ghost.textContent = NAMES[drag.k] + ' · ' + short(g.work[s]) + (en > s ? ' → ' + short(g.work[en]) : '') + ' (' + window.GD.count(isoOf(g.work[s]), isoOf(g.work[en])) + ' j ouvrés)';
 });
 document.addEventListener('pointerup', function () {
   var d = drag; drag = null;

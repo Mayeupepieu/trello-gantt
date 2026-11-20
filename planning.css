@@ -26,6 +26,7 @@ td.name.done { color: var(--muted); text-decoration: line-through; }
 td.etude { background: var(--etude-bg); } td.pose { background: var(--pose-bg); }
 input[type=date], input[type=text] { font: inherit; font-size: 13px; padding: 4px 5px; border: 1px solid var(--input-border); border-radius: 4px; background: var(--input-bg); color: var(--input-text); }
 input[type=date] { width: 122px; }
+input[type=number] { font: inherit; font-size: 13px; width: 62px; padding: 4px 5px; border: 1px solid var(--input-border); border-radius: 4px; background: var(--input-bg); color: var(--input-text); }
 input[type=text] { width: 100%; }
 .sep { color: var(--muted); padding: 0 3px; }
 .main td.name { font-weight: 600; }
@@ -39,3 +40,8 @@ button.clr:hover, button.del:hover { color: var(--danger); background: none; }
 #footer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 8px; align-items: center; }
 #status { margin-left: auto; color: var(--muted); }
 #status.err { color: var(--danger); }
+td.etude, td.pose { white-space: normal; }
+.dr { display: flex; align-items: center; white-space: nowrap; }
+.dd { display: flex; align-items: center; gap: 4px; margin-top: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.dd button.clr { margin-left: auto; font-size: 12px; }
+#footer .hint { color: var(--muted); font-size: 12px; margin-left: 8px; }
